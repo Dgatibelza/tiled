@@ -27,12 +27,10 @@ namespace Tiled {
 class Tileset;
 class Terrain;
 
-namespace Internal {
-
 class TilesetDocument;
 
 /**
- * A model providing a tree view on the terrain types available on a map.
+ * A model representing the list of terrain types of a tileset.
  */
 class TilesetTerrainModel : public QAbstractListModel
 {
@@ -51,7 +49,7 @@ public:
     TilesetTerrainModel(TilesetDocument *mapDocument,
                         QObject *parent = nullptr);
 
-    ~TilesetTerrainModel();
+    ~TilesetTerrainModel() override;
 
     using QAbstractListModel::index;
     QModelIndex index(Terrain *terrain) const;
@@ -91,6 +89,7 @@ public:
 
     void insertTerrain(int index, Terrain *terrain);
     Terrain *takeTerrainAt(int index);
+    void swapTerrains(int index, int swapIndex);
     void setTerrainName(int index, const QString &name);
     void setTerrainImage(int index, int tileId);
 
@@ -99,6 +98,8 @@ signals:
     void terrainAdded(Tileset *tileset, int terrainId);
     void terrainAboutToBeRemoved(Terrain *terrain);
     void terrainRemoved(Terrain *terrain);
+    void terrainAboutToBeSwapped(Tileset *tileset, int terrainId, int swapTerrainId);
+    void terrainSwapped(Tileset *tileset);
 
     /**
      * Emitted when either the name or the image of a terrain changed.
@@ -111,5 +112,4 @@ private:
     TilesetDocument *mTilesetDocument;
 };
 
-} // namespace Internal
 } // namespace Tiled

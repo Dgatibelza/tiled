@@ -23,6 +23,7 @@
 #include "commanddatamodel.h"
 #include "commanddialog.h"
 #include "logginginterface.h"
+#include "pluginmanager.h"
 #include "utils.h"
 
 #include <QApplication>
@@ -31,29 +32,21 @@
 #include <QMenu>
 
 namespace Tiled {
-namespace Internal {
-
-CommandManager *CommandManager::mInstance;
 
 CommandManager::CommandManager()
     : mModel(new CommandDataModel(this))
-    , mLogger(new LoggingInterface())
 {
     updateActions();
 }
 
-CommandManager *CommandManager::instance()
+CommandManager::~CommandManager()
 {
-    if (!mInstance)
-        mInstance = new CommandManager;
-
-    return mInstance;
 }
 
-void CommandManager::deleteInstance()
+CommandManager *CommandManager::instance()
 {
-    delete mInstance;
-    mInstance = nullptr;
+    static CommandManager instance;
+    return &instance;
 }
 
 CommandDataModel *CommandManager::commandDataModel()
@@ -74,7 +67,7 @@ void CommandManager::showDialog()
     dialog.exec();
 }
 
-void CommandManager::populateMenus()
+void CommandManager::populateMenus() const
 {
     for (QMenu *menu : mMenus) {
         menu->clear();
@@ -98,7 +91,7 @@ void CommandManager::updateActions()
         QAction *mAction = new QAction(command.name, this);
         mAction->setShortcut(command.shortcut);
 
-        connect(mAction, &QAction::triggered, [this,i]() { mModel->execute(i); });
+        connect(mAction, &QAction::triggered, [this,i] { mModel->execute(i); });
 
         mActions.append(mAction);
     }
@@ -111,7 +104,7 @@ void CommandManager::updateActions()
 
     mEditCommands = new QAction(this);
     mEditCommands->setIcon(
-            QIcon(QLatin1String(":/images/24x24/system-run.png")));
+            QIcon(QLatin1String(":/images/24/system-run.png")));
     Utils::setThemeIcon(mEditCommands, "system-run");
 
     connect(mEditCommands, &QAction::triggered, this, &CommandManager::showDialog);
@@ -127,5 +120,4 @@ void CommandManager::retranslateUi()
     mEditCommands->setText(tr("Edit Commands..."));
 }
 
-} // namespace Internal
 } // namespace Tiled

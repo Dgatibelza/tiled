@@ -22,15 +22,15 @@
 
 #include "terrainmodel.h"
 
+#include "changeterrain.h"
 #include "containerhelpers.h"
-#include "mapdocument.h"
 #include "map.h"
-#include "renameterrain.h"
+#include "mapdocument.h"
 #include "terrain.h"
 #include "tile.h"
+#include "tileset.h"
 #include "tilesetdocument.h"
 #include "tilesetdocumentsmodel.h"
-#include "tileset.h"
 #include "tilesetterrainmodel.h"
 
 #include <QApplication>
@@ -38,7 +38,6 @@
 #include <QPalette>
 
 using namespace Tiled;
-using namespace Tiled::Internal;
 
 TerrainModel::TerrainModel(QAbstractItemModel *tilesetDocumentsModel,
                            QObject *parent):
@@ -110,7 +109,7 @@ int TerrainModel::rowCount(const QModelIndex &parent) const
 
 int TerrainModel::columnCount(const QModelIndex &parent) const
 {
-    Q_UNUSED(parent);
+    Q_UNUSED(parent)
     return 1;
 }
 
@@ -202,6 +201,10 @@ void TerrainModel::onTilesetRowsInserted(const QModelIndex &parent, int first, i
                 this, &TerrainModel::onTerrainAboutToBeRemoved);
         connect(tilesetTerrainModel, &TilesetTerrainModel::terrainRemoved,
                 this, &TerrainModel::onTerrainRemoved);
+        connect(tilesetTerrainModel, &TilesetTerrainModel::terrainAboutToBeSwapped,
+                this, &TerrainModel::onTerrainAboutToBeSwapped);
+        connect(tilesetTerrainModel, &TilesetTerrainModel::terrainSwapped,
+                this, &TerrainModel::onTerrainSwapped);
     }
     endInsertRows();
 }
@@ -294,4 +297,15 @@ void TerrainModel::onTerrainRemoved(Terrain *terrain)
     // for the TerrainFilterModel
     const QModelIndex index = TerrainModel::index(terrain->tileset());
     emit dataChanged(index, index);
+}
+
+void TerrainModel::onTerrainAboutToBeSwapped(Tileset *tileset, int terrainId, int swapTerrainId)
+{
+    QModelIndex parent = index(tileset);
+    beginMoveRows(parent, terrainId, terrainId, parent, swapTerrainId);
+}
+
+void TerrainModel::onTerrainSwapped()
+{
+    endMoveRows();
 }

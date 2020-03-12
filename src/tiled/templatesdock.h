@@ -21,11 +21,16 @@
 
 #pragma once
 
-#include <QDockWidget>
-#include <QTreeView>
-#include <QAction>
+#include "mapdocument.h"
 
-class QAbstractProxyModel;
+#include <QAction>
+#include <QDockWidget>
+#include <QHash>
+#include <QSharedPointer>
+#include <QTreeView>
+
+class QPushButton;
+class QLabel;
 
 namespace Tiled {
 
@@ -33,10 +38,7 @@ class ObjectTemplate;
 class MapObject;
 class Tile;
 
-namespace Internal {
-
 class AbstractTool;
-class MapDocument;
 class MapScene;
 class MapView;
 class ObjectTemplateModel;
@@ -50,45 +52,54 @@ class TemplatesDock : public QDockWidget
 
 public:
     TemplatesDock(QWidget *parent = nullptr);
-    ~TemplatesDock();
+    ~TemplatesDock() override;
 
     void setPropertiesDock(PropertiesDock *propertiesDock);
+    void setTile(Tile *tile);
 
 signals:
     void currentTemplateChanged(ObjectTemplate *objectTemplate);
-    void templateEdited(const MapObject *mapObject);
-    void setTile(Tile *tile);
+    void templateTilesetReplaced();
 
-private slots:
-    void setSelectedTool(AbstractTool*tool);
-    void openTemplateGroup();
-    void setTemplate(ObjectTemplate *objectTemplate);
-
-    void undo();
-    void redo();
-    void applyChanges();
+public slots:
+    void openTemplate(const QString &path);
+    void bringToFront();
 
 protected:
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
 
 private:
+    void setTemplate(ObjectTemplate *objectTemplate);
+    void checkTileset();
+
+    void undo();
+    void redo();
+    void applyChanges();
+
+    void chooseDirectory();
+
     void retranslateUi();
+    void fixTileset();
+
+    MapObject *dummyObject() const;
 
     TemplatesView *mTemplatesView;
 
-    QAction *mNewTemplateGroup;
-    QAction *mOpenTemplateGroup;
+    QAction *mChooseDirectory;
     QAction *mUndoAction;
     QAction *mRedoAction;
+    QPushButton *mFixTilesetButton;
+    QLabel *mDescriptionLabel;
 
-    MapDocument *mDummyMapDocument;
+    MapDocumentPtr mDummyMapDocument;
     MapScene *mMapScene;
     MapView *mMapView;
     ObjectTemplate *mObjectTemplate;
-    MapObject *mObject;
     PropertiesDock *mPropertiesDock;
     ToolManager *mToolManager;
+
+    static QHash<ObjectTemplate*, QWeakPointer<MapDocument>> ourDummyDocuments;
 };
 
 class TemplatesView : public QTreeView
@@ -98,8 +109,7 @@ class TemplatesView : public QTreeView
 public:
     QSize sizeHint() const override;
     TemplatesView(QWidget *parent = nullptr);
-
-    void applyTemplateGroups();
+    void setSelectedTemplate(const QString &path);
 
 signals:
     void currentTemplateChanged(ObjectTemplate *objectTemplate);
@@ -110,16 +120,15 @@ protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
 
 public slots:
-    void updateSelection(const QItemSelection &selected, const QItemSelection &deselected);
-    void selectAllInstances();
+    void onCurrentChanged(const QModelIndex &index);
 
 private:
-    QAction *mActionSelectAllInstances;
-    ObjectTemplate *mObjectTemplate;
+    void onTemplatesDirectoryChanged(const QString &rootPath);
+
+    QSharedPointer<ObjectTemplateModel> mModel;
 };
 
 inline void TemplatesDock::setPropertiesDock(PropertiesDock *propertiesDock)
 { mPropertiesDock = propertiesDock; }
 
-} // namespace Internal
 } // namespace Tiled

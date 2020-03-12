@@ -20,14 +20,13 @@
 
 #include "tilesetterrainmodel.h"
 
-#include "tilesetdocument.h"
-#include "renameterrain.h"
+#include "changeterrain.h"
 #include "terrain.h"
-#include "tileset.h"
 #include "tile.h"
+#include "tileset.h"
+#include "tilesetdocument.h"
 
 using namespace Tiled;
-using namespace Tiled::Internal;
 
 TilesetTerrainModel::TilesetTerrainModel(TilesetDocument *tilesetDocument,
                                          QObject *parent):
@@ -152,6 +151,27 @@ Terrain *TilesetTerrainModel::takeTerrainAt(int index)
     emit terrainRemoved(terrain);
 
     return terrain;
+}
+
+/**
+ * Swaps a terrain type at \a index with another index.
+ */
+void TilesetTerrainModel::swapTerrains(int index, int swapIndex)
+{
+    Q_ASSERT(index != swapIndex);
+
+    Tileset *tileset = mTilesetDocument->tileset().data();
+    int swapIndexChild = swapIndex + (swapIndex > index ? 1 : 0);
+
+    emit terrainAboutToBeSwapped(tileset, index, swapIndexChild);
+
+    beginMoveRows(QModelIndex(), index, index, QModelIndex(), swapIndexChild);
+
+    tileset->swapTerrains(index, swapIndex);
+
+    emit terrainSwapped(tileset);
+
+    endMoveRows();
 }
 
 void TilesetTerrainModel::setTerrainName(int index, const QString &name)

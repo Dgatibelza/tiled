@@ -20,10 +20,13 @@
 
 #include "utils.h"
 
+#include "mapformat.h"
 #include "preferences.h"
 
 #include <QAction>
-#include <QCoreApplication>
+#include <QApplication>
+#include <QClipboard>
+#include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImageReader>
@@ -31,6 +34,7 @@
 #include <QKeyEvent>
 #include <QMainWindow>
 #include <QMenu>
+#include <QProcess>
 #include <QRegExp>
 #include <QScreen>
 #include <QSettings>
@@ -56,10 +60,16 @@ namespace Utils {
 
 /**
  * Returns a file dialog filter that matches all readable image formats.
+ *
+ * This includes all supported map formats, which are rendered to an image when
+ * used in this context.
  */
 QString readableImageFormatsFilter()
 {
-    return toImageFileFilter(QImageReader::supportedImageFormats());
+    auto imageFilter = toImageFileFilter(QImageReader::supportedImageFormats());
+
+    FormatHelper<MapFormat> helper(FileFormat::Read, imageFilter);
+    return helper.filter();
 }
 
 /**
@@ -108,6 +118,19 @@ bool fileNameMatchesNameFilter(const QString &fileName,
     return false;
 }
 
+QString firstExtension(const QString &nameFilter)
+{
+    QString extension;
+
+    const auto filterList = cleanFilterList(nameFilter);
+    if (!filterList.isEmpty()) {
+        extension = filterList.first();
+        extension.remove(QLatin1Char('*'));
+    }
+
+    return extension;
+}
+
 
 /**
  * Restores a widget's geometry.
@@ -117,7 +140,7 @@ void restoreGeometry(QWidget *widget)
 {
     Q_ASSERT(!widget->objectName().isEmpty());
 
-    const QSettings *settings = Internal::Preferences::instance()->settings();
+    const QSettings *settings = Preferences::instance()->settings();
 
     const QString key = widget->objectName() + QLatin1String("/Geometry");
     widget->restoreGeometry(settings->value(key).toByteArray());
@@ -136,7 +159,7 @@ void saveGeometry(QWidget *widget)
 {
     Q_ASSERT(!widget->objectName().isEmpty());
 
-    QSettings *settings = Internal::Preferences::instance()->settings();
+    QSettings *settings = Preferences::instance()->settings();
 
     const QString key = widget->objectName() + QLatin1String("/Geometry");
     settings->setValue(key, widget->saveGeometry());
@@ -149,7 +172,7 @@ void saveGeometry(QWidget *widget)
 
 qreal defaultDpiScale()
 {
-    static qreal scale = []() {
+    static qreal scale = []{
         if (const QScreen *screen = QGuiApplication::primaryScreen())
             return screen->logicalDotsPerInchX() / 96.0;
         return 1.0;
@@ -168,16 +191,21 @@ qreal dpiScaled(qreal value)
 #endif
 }
 
+int dpiScaled(int value)
+{
+    return qRound(dpiScaled(qreal(value)));
+}
+
 QSize dpiScaled(QSize value)
 {
-    return QSize(qRound(dpiScaled(value.width())),
-                 qRound(dpiScaled(value.height())));
+    return QSize(dpiScaled(value.width()),
+                 dpiScaled(value.height()));
 }
 
 QPoint dpiScaled(QPoint value)
 {
-    return QPoint(qRound(dpiScaled(value.x())),
-                  qRound(dpiScaled(value.y())));
+    return QPoint(dpiScaled(value.x()),
+                  dpiScaled(value.y()));
 }
 
 QRectF dpiScaled(QRectF value)
@@ -224,6 +252,55 @@ bool isResetZoomShortcut(QKeyEvent *event)
         return true;
 
     return false;
+}
+
+/*
+ * Code based on FileUtils::showInGraphicalShell from Qt Creator
+ * Copyright (C) 2016 The Qt Company Ltd.
+ * Used under the terms of the GNU General Public License version 3
+ */
+static void showInFileManager(const QString &fileName)
+{
+    // Mac, Windows support folder or file.
+#if defined(Q_OS_WIN)
+    QStringList param;
+    if (!QFileInfo(fileName).isDir())
+        param += QLatin1String("/select,");
+    param += QDir::toNativeSeparators(fileName);
+    QProcess::startDetached(QLatin1String("explorer.exe"), param);
+#elif defined(Q_OS_MAC)
+    QStringList scriptArgs;
+    scriptArgs << QLatin1String("-e")
+               << QString::fromLatin1("tell application \"Finder\" to reveal POSIX file \"%1\"")
+                                     .arg(fileName);
+    QProcess::execute(QLatin1String("/usr/bin/osascript"), scriptArgs);
+    scriptArgs.clear();
+    scriptArgs << QLatin1String("-e")
+               << QLatin1String("tell application \"Finder\" to activate");
+    QProcess::execute(QLatin1String("/usr/bin/osascript"), scriptArgs);
+#else
+    // We cannot select a file here, because xdg-open would open the file
+    // instead of the file browser...
+    QProcess::startDetached(QString(QLatin1String("xdg-open \"%1\""))
+                            .arg(QFileInfo(fileName).absolutePath()));
+#endif
+}
+
+void addFileManagerActions(QMenu &menu, const QString &fileName)
+{
+    if (fileName.isEmpty())
+        return;
+
+    QAction *copyPath = menu.addAction(QCoreApplication::translate("Utils", "Copy File Path"));
+    QObject::connect(copyPath, &QAction::triggered, [fileName] {
+        QClipboard *clipboard = QApplication::clipboard();
+        clipboard->setText(QDir::toNativeSeparators(fileName));
+    });
+
+    QAction *openFolder = menu.addAction(QCoreApplication::translate("Utils", "Open Containing Folder..."));
+    QObject::connect(openFolder, &QAction::triggered, [fileName] {
+        showInFileManager(fileName);
+    });
 }
 
 } // namespace Utils

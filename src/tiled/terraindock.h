@@ -34,8 +34,6 @@ namespace Tiled {
 
 class Terrain;
 
-namespace Internal {
-
 class Document;
 class TerrainFilterModel;
 class TerrainModel;
@@ -53,7 +51,7 @@ class TerrainDock : public QDockWidget
 
 public:
     TerrainDock(QWidget *parent = nullptr);
-    ~TerrainDock();
+    ~TerrainDock() override;
 
     /**
      * Sets the document for which the terrains should be displayed. This can
@@ -88,20 +86,24 @@ public slots:
 protected:
     void changeEvent(QEvent *e) override;
 
-private slots:
+private:
     void refreshCurrentTerrain();
     void indexPressed(const QModelIndex &index);
     void expandRows(const QModelIndex &parent, int first, int last);
     void eraseTerrainButtonClicked();
+    void rowsMoved();
 
-private:
     void retranslateUi();
 
     QModelIndex terrainIndex(Terrain *terrain) const;
+    void moveTerrainTypeUp();
+    void moveTerrainTypeDown();
 
     QToolBar *mToolBar;
     QAction *mAddTerrainType;
     QAction *mRemoveTerrainType;
+    QAction *mMoveTerrainTypeUp;
+    QAction *mMoveTerrainTypeDown;
 
     Document *mDocument;
     TerrainView *mTerrainView;
@@ -114,5 +116,4 @@ private:
     bool mInitializing;
 };
 
-} // namespace Internal
 } // namespace Tiled

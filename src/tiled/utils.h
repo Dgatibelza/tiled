@@ -36,6 +36,7 @@ QString writableImageFormatsFilter();
 QStringList cleanFilterList(const QString &filter);
 bool fileNameMatchesNameFilter(const QString &fileName,
                                const QString &nameFilter);
+QString firstExtension(const QString &nameFilter);
 
 /**
  * Looks up the icon with the specified \a name from the system theme and set
@@ -47,10 +48,10 @@ bool fileNameMatchesNameFilter(const QString &fileName,
  * Does nothing when the platform is not Linux.
  */
 template <class T>
-void setThemeIcon(T *t, const char *name)
+void setThemeIcon(T *t, const QString &name)
 {
 #ifdef Q_OS_LINUX
-    QIcon themeIcon = QIcon::fromTheme(QLatin1String(name));
+    QIcon themeIcon = QIcon::fromTheme(name);
     if (!themeIcon.isNull())
         t->setIcon(themeIcon);
 #else
@@ -59,10 +60,17 @@ void setThemeIcon(T *t, const char *name)
 #endif
 }
 
+template <class T>
+void setThemeIcon(T *t, const char *name)
+{
+    setThemeIcon(t, QLatin1String(name));
+}
+
 void restoreGeometry(QWidget *widget);
 void saveGeometry(QWidget *widget);
 
 qreal defaultDpiScale();
+int dpiScaled(int value);
 qreal dpiScaled(qreal value);
 QSize dpiScaled(QSize value);
 QPoint dpiScaled(QPoint value);
@@ -72,6 +80,8 @@ QSize smallIconSize();
 bool isZoomInShortcut(QKeyEvent *event);
 bool isZoomOutShortcut(QKeyEvent *event);
 bool isResetZoomShortcut(QKeyEvent *event);
+
+void addFileManagerActions(QMenu &menu, const QString &fileName);
 
 } // namespace Utils
 } // namespace Tiled

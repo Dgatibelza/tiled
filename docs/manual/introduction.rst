@@ -27,7 +27,7 @@ to automate parts of your work.
 Tiled also supports :ref:`object layers <object-layer-introduction>`,
 which traditionally were only for annotating your map with information
 but more recently they can also be used to place images. You can add
-rectangle, ellipse, polygon, polyline and tile objects. Object placement
+rectangle, point, ellipse, polygon, polyline and tile objects. Object placement
 is not limited to the tile grid and objects can also be scaled or
 rotated. Object layers offer a lot of flexibility to add almost any
 information to your level that your game needs.
@@ -78,7 +78,7 @@ New Tileset dialog:
 
    New Tileset
 
-Click the *Browse…* button and select the ``tmw_desert_spacing.png``
+Click the :guilabel:`Browse…` button and select the :file:`tmw_desert_spacing.png`
 tileset from the examples shipping with Tiled (or use one of your own if
 you wish). This example tileset uses a tile size of 32x32. It also has a
 one pixel *margin* around the tiles and a one pixel *spacing* in between
@@ -87,7 +87,7 @@ values on 0).
 
 .. note::
 
-   We leave the *Embed in map* option disabled. This is recommended,
+   We leave the :guilabel:`Embed in map` option disabled. This is recommended,
    since it will allow the tileset to be used by multiple maps without
    setting up its parameters again. It will also be good to store the
    tileset in its own file if you later add tile properties, terrain
