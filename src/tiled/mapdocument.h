@@ -30,7 +30,6 @@
 #include "tileset.h"
 
 #include <QList>
-#include <QPointer>
 #include <QRegion>
 
 #include <memory>
@@ -104,7 +103,7 @@ public:
     MapFormat *readerFormat() const;
     void setReaderFormat(MapFormat *format);
 
-    FileFormat *writerFormat() const override;
+    MapFormat *writerFormat() const override;
     void setWriterFormat(MapFormat *format);
 
     QString lastExportFileName() const override;
@@ -380,11 +379,11 @@ private:
     void moveObjectIndex(const MapObject *object, int count);
 
     /*
-     * QPointer is used since the formats referenced here may be dynamically
+     * QString is used since the formats referenced here may be dynamically
      * added by a plugin, and can also be removed again.
      */
-    QPointer<MapFormat> mReaderFormat;
-    QPointer<MapFormat> mWriterFormat;
+    QString mReaderFormat;
+    QString mWriterFormat;
     std::unique_ptr<Map> mMap;
     LayerModel *mLayerModel;
     QRegion mSelectedArea;

@@ -32,6 +32,11 @@ namespace Tiled {
 
 class ScriptModule;
 
+/**
+ * Singleton for managing the script engine and module.
+ *
+ * Dependencies: ProjectManager, DocumentManager (optional)
+ */
 class ScriptManager : public QObject
 {
     Q_OBJECT
@@ -40,7 +45,7 @@ public:
     static ScriptManager &instance();
     static void deleteInstance();
 
-    void initialize();
+    void ensureInitialized();
 
     const QString &extensionsPath() const;
 
@@ -62,23 +67,26 @@ public:
     void throwError(const QString &message);
     void throwNullArgError(int argNumber);
 
-    void reset();
+    void refreshExtensionsPaths();
 
 private:
     explicit ScriptManager(QObject *parent = nullptr);
     ~ScriptManager() = default;
+
+    void reset();
+    void initialize();
 
     void scriptFilesChanged(const QStringList &scriptFiles);
 
     void loadExtensions();
     void loadExtension(const QString &path);
 
-    QJSEngine *mEngine;
-    ScriptModule *mModule;
+    QJSEngine *mEngine = nullptr;
+    ScriptModule *mModule = nullptr;
     FileSystemWatcher mWatcher;
     QString mExtensionsPath;
     QStringList mExtensionsPaths;
-    int mTempCount;
+    int mTempCount = 0;
 
     static ScriptManager *mInstance;
 };

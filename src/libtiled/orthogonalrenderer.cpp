@@ -215,8 +215,10 @@ QPainterPath OrthogonalRenderer::interactionShape(const MapObject *object) const
     case MapObject::Polygon:
     case MapObject::Ellipse:
     case MapObject::Text:
-    case MapObject::Point:
         path = shape(object);
+        break;
+    case MapObject::Point:
+        path = pointInteractionShape(object);
         break;
     }
 
@@ -261,56 +263,26 @@ void OrthogonalRenderer::drawGrid(QPainter *painter, const QRectF &rect,
     }
 }
 
-void OrthogonalRenderer::drawTileLayer(QPainter *painter,
-                                       const TileLayer *layer,
+void OrthogonalRenderer::drawTileLayer(const RenderTileCallback &renderTile,
                                        const QRectF &exposed) const
 {
-
     const int tileWidth = map()->tileWidth();
     const int tileHeight = map()->tileHeight();
+
     if (tileWidth <= 0 || tileHeight <= 0)
         return;
 
-    const QPointF layerPos(layer->x() * tileWidth,
-                           layer->y() * tileHeight);
-
-    QRect bounds = layer->localBounds();
-    int startX = bounds.left();
-    int startY = bounds.top();
-    int endX = bounds.right();
-    int endY = bounds.bottom();
-
-    if (!exposed.isNull()) {
-        QMargins drawMargins = layer->drawMargins();
-        drawMargins.setTop(drawMargins.top() - tileHeight);
-        drawMargins.setRight(drawMargins.right() - tileWidth);
-
-        QRectF rect = exposed.adjusted(-drawMargins.right(),
-                                       -drawMargins.bottom(),
-                                       drawMargins.left(),
-                                       drawMargins.top());
-
-        rect.translate(-layerPos);
-
-        startX = qMax(qFloor(rect.x() / tileWidth), startX);
-        startY = qMax(qFloor(rect.y() / tileHeight), startY);
-        endX = qMin(qCeil(rect.right()) / tileWidth, endX);
-        endY = qMin(qCeil(rect.bottom()) / tileHeight, endY);
-    }
+    int startX = qFloor(exposed.x() / tileWidth);
+    int startY = qFloor(exposed.y() / tileHeight);
+    int endX = qCeil(exposed.right()) / tileWidth;
+    int endY = qCeil(exposed.bottom()) / tileHeight;
 
     // Return immediately when there is nothing to draw
     if (startX > endX || startY > endY)
         return;
 
-    const QTransform savedTransform = painter->transform();
-    painter->translate(layerPos);
-
-    CellRenderer renderer(painter, this, layer->effectiveTintColor());
-
-    Map::RenderOrder renderOrder = map()->renderOrder();
-
     int incX = 1, incY = 1;
-    switch (renderOrder) {
+    switch (map()->renderOrder()) {
     case Map::RightUp:
         std::swap(startY, endY);
         incY = -1;
@@ -332,24 +304,9 @@ void OrthogonalRenderer::drawTileLayer(QPainter *painter,
     endX += incX;
     endY += incY;
 
-    for (int y = startY; y != endY; y += incY) {
-        for (int x = startX; x != endX; x += incX) {
-            const Cell &cell = layer->cellAt(x, y);
-            if (cell.isEmpty())
-                continue;
-
-            Tile *tile = cell.tile();
-            QSize size = (tile && !tile->image().isNull()) ? tile->size() : map()->tileSize();
-            renderer.render(cell,
-                            QPointF(x * tileWidth, (y + 1) * tileHeight),
-                            size,
-                            CellRenderer::BottomLeft);
-        }
-    }
-
-    renderer.flush();
-
-    painter->setTransform(savedTransform);
+    for (int y = startY; y != endY; y += incY)
+        for (int x = startX; x != endX; x += incX)
+            renderTile(QPoint(x, y), QPointF(x * tileWidth, (y + 1) * tileHeight));
 }
 
 void OrthogonalRenderer::drawTileSelection(QPainter *painter,
@@ -357,16 +314,29 @@ void OrthogonalRenderer::drawTileSelection(QPainter *painter,
                                            const QColor &color,
                                            const QRectF &exposed) const
 {
+    QPainterPath path;
+
 #if QT_VERSION < 0x050800
     const auto rects = region.rects();
     for (const QRect &r : rects) {
 #else
     for (const QRect &r : region) {
 #endif
-        const QRectF toFill = QRectF(boundingRect(r)).intersected(exposed);
-        if (!toFill.isEmpty())
-            painter->fillRect(toFill, color);
+        const QRectF toFill = QRectF(boundingRect(r));
+        if (toFill.intersects(exposed))
+            path.addRect(toFill);
     }
+
+    QColor penColor(color);
+    penColor.setAlpha(255);
+
+    QPen pen(penColor);
+    pen.setCosmetic(true);
+
+    painter->setPen(pen);
+    painter->setBrush(color);
+    painter->setRenderHint(QPainter::Antialiasing, false);
+    painter->drawPath(path.simplified());
 }
 
 void OrthogonalRenderer::drawMapObject(QPainter *painter,

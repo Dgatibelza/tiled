@@ -53,11 +53,11 @@
 #include "zoomable.h"
 
 #include <QActionGroup>
+#include <QBitmap>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QMenu>
-#include <QSettings>
 #include <QShortcut>
 #include <QSplitter>
 #include <QStatusBar>
@@ -68,8 +68,10 @@
 
 namespace Tiled {
 
-static const char OBJECTS_VIEW_VISIBILITY[] = "TileCollisionDock/ObjectsViewVisibility";
-static const char COLLISION_DOCK_SPLITTER_STATE[] = "TileCollisionDock/SplitterState";
+namespace preferences {
+static Preference<QVariant> objectsViewVisibility { "TileCollisionDock/ObjectsViewVisibility", TileCollisionDock::Hidden };
+static Preference<QByteArray> splitterState { "TileCollisionDock/SplitterState" };
+} // namespace preferences
 
 TileCollisionDock::TileCollisionDock(QWidget *parent)
     : QDockWidget(parent)
@@ -94,6 +96,14 @@ TileCollisionDock::TileCollisionDock(QWidget *parent)
     CreateObjectTool *polygonObjectsTool = new CreatePolygonObjectTool(this);
     CreateObjectTool *templatesTool = new CreateTemplateTool(this);
 
+    // Autodetection of tile extents
+    QIcon autoDetectMaskIcon(QLatin1String("://images/24/detect-bounding-box.png"));
+    autoDetectMaskIcon.addFile(QLatin1String("://images/48/detect-bounding-box.png"));
+    mActionAutoDetectMask = new QAction(this);
+    mActionAutoDetectMask->setEnabled(false);
+    mActionAutoDetectMask->setIcon(autoDetectMaskIcon);
+    connect(mActionAutoDetectMask, &QAction::triggered, this, &TileCollisionDock::autoDetectMask);
+
     QToolBar *toolsToolBar = new QToolBar(this);
     toolsToolBar->setObjectName(QLatin1String("TileCollisionDockToolBar"));
     toolsToolBar->setMovable(false);
@@ -108,6 +118,8 @@ TileCollisionDock::TileCollisionDock(QWidget *parent)
     toolsToolBar->addAction(mToolManager->registerTool(ellipseObjectsTool));
     toolsToolBar->addAction(mToolManager->registerTool(polygonObjectsTool));
     toolsToolBar->addAction(mToolManager->registerTool(templatesTool));
+    toolsToolBar->addSeparator();
+    toolsToolBar->addAction(mActionAutoDetectMask);
 
     mActionDuplicateObjects = new QAction(this);
     mActionDuplicateObjects->setIcon(QIcon(QLatin1String(":/images/16/stock-duplicate-16.png")));
@@ -139,7 +151,7 @@ TileCollisionDock::TileCollisionDock(QWidget *parent)
     mObjectsWidget->setVisible(false);
     auto objectsVertical = new QVBoxLayout(mObjectsWidget);
     objectsVertical->setSpacing(0);
-    objectsVertical->setMargin(0);
+    objectsVertical->setContentsMargins(0, 0, 0, 0);
     objectsVertical->addWidget(mObjectsView);
     objectsVertical->addWidget(objectsToolBar);
 
@@ -202,7 +214,7 @@ TileCollisionDock::TileCollisionDock(QWidget *parent)
     auto widget = new QWidget(this);
     auto vertical = new QVBoxLayout(widget);
     vertical->setSpacing(0);
-    vertical->setMargin(0);
+    vertical->setContentsMargins(0, 0, 0, 0);
     vertical->addLayout(horizontal);
     vertical->addWidget(mObjectsViewSplitter);
 
@@ -231,18 +243,39 @@ TileCollisionDock::~TileCollisionDock()
     setTile(nullptr);
 }
 
+/**
+ * Automatically detect the extents of the tile and append a simple
+ * rectangular collision mask.
+ */
+void TileCollisionDock::autoDetectMask()
+{
+    if (!mDummyMapDocument)
+        return;
+
+    const QPixmap &pixmap = mTile->image();
+    const QRect content = pixmap.hasAlphaChannel() ? QRegion(pixmap.mask()).boundingRect()
+                                                   : pixmap.rect();
+
+    // Create the rectangular collision shape
+    MapObject *newObject = new MapObject(QString(), QString(),
+                                         content.topLeft(),
+                                         content.size());
+
+    ObjectGroup *objectGroup = static_cast<ObjectGroup*>(mDummyMapDocument->map()->layerAt(1));
+    mDummyMapDocument->undoStack()->push(new AddMapObjects(mDummyMapDocument.data(), objectGroup, newObject));
+    mDummyMapDocument->setSelectedObjects({ newObject });
+}
+
 void TileCollisionDock::saveState()
 {
-    QSettings *settings = Preferences::instance()->settings();
-    settings->setValue(QLatin1String(OBJECTS_VIEW_VISIBILITY), QVariant::fromValue(mObjectsViewVisibility).toString());
-    settings->setValue(QLatin1String(COLLISION_DOCK_SPLITTER_STATE), mObjectsViewSplitter->saveState());
+    preferences::objectsViewVisibility = QVariant::fromValue(mObjectsViewVisibility).toString();
+    preferences::splitterState = mObjectsViewSplitter->saveState();
 }
 
 void TileCollisionDock::restoreState()
 {
-    const QSettings *settings = Preferences::instance()->settings();
-    setObjectsViewVisibility(settings->value(QLatin1String(OBJECTS_VIEW_VISIBILITY), Hidden).value<ObjectsViewVisibility>());
-    mObjectsViewSplitter->restoreState(settings->value(QLatin1String(COLLISION_DOCK_SPLITTER_STATE)).toByteArray());
+    setObjectsViewVisibility(preferences::objectsViewVisibility.get().value<ObjectsViewVisibility>());
+    mObjectsViewSplitter->restoreState(preferences::splitterState);
 }
 
 void TileCollisionDock::setTilesetDocument(TilesetDocument *tilesetDocument)
@@ -352,6 +385,7 @@ void TileCollisionDock::setTile(Tile *tile)
     auto previousDocument = mDummyMapDocument;
 
     mMapView->setEnabled(tile);
+    mActionAutoDetectMask->setEnabled(tile);
 
     if (tile) {
         Map::Orientation orientation = Map::Orthogonal;
@@ -673,6 +707,8 @@ void TileCollisionDock::retranslateUi()
 {
     setWindowTitle(QCoreApplication::translate("Tiled::MainWindow", "Tile Collision Editor"));
 
+    mActionAutoDetectMask->setText(tr("Detect Bounding Box"));
+
     mActionDuplicateObjects->setText(tr("Duplicate Objects"));
     mActionRemoveObjects->setText(tr("Remove Objects"));
     mActionMoveUp->setText(tr("Move Objects Up"));
@@ -681,3 +717,5 @@ void TileCollisionDock::retranslateUi()
 }
 
 } // namespace Tiled
+
+#include "moc_tilecollisiondock.cpp"

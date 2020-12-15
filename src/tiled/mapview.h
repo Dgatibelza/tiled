@@ -25,6 +25,7 @@
 
 namespace Tiled {
 
+class Layer;
 class MapObject;
 
 class MapDocument;
@@ -61,8 +62,6 @@ public:
     MapView(QWidget *parent = nullptr, Mode mode = StaticContents);
     ~MapView() override;
 
-    void setViewInitialized();
-
     void setScene(MapScene *scene);
     MapScene *mapScene() const;
 
@@ -70,6 +69,8 @@ public:
 
     qreal scale() const;
     void setScale(qreal scale);
+
+    const QRectF &viewRect() const;
 
     void fitMapInView();
 
@@ -79,12 +80,13 @@ public:
     using QGraphicsView::centerOn;
     Q_INVOKABLE void centerOn(qreal x, qreal y) { forceCenterOn(QPointF(x, y)); }
 
-    void forceCenterOn(const QPointF &pos);
+    void forceCenterOn(QPointF pos);
+    void forceCenterOn(QPointF pos, const Layer &layer);
 
 protected:
     bool event(QEvent *event) override;
 
-    void showEvent(QShowEvent *) override;
+    void paintEvent(QPaintEvent *event) override;
     void hideEvent(QHideEvent *) override;
     void resizeEvent(QResizeEvent *event) override;
 
@@ -104,12 +106,14 @@ protected:
 
 signals:
     void focused();
+    void viewRectChanged();
 
 private:
     void adjustScale(qreal scale);
     void setUseOpenGL(bool useOpenGL);
     void updateSceneRect(const QRectF &sceneRect);
     void updateSceneRect(const QRectF &sceneRect, const QTransform &transform);
+    void updateViewRect();
     void focusMapObject(MapObject *mapObject);
 
     void setMapDocument(MapDocument *mapDocument);
@@ -119,14 +123,19 @@ private:
     QPointF mLastMouseScenePos;
     bool mHandScrolling = false;
     bool mViewInitialized = false;
+    bool mHasInitialCenterPos = false;
+    QPointF mInitialCenterPos;
+    QRectF mViewRect;
     Mode mMode;
     Zoomable *mZoomable;
 };
 
-
-inline void MapView::setViewInitialized()
+/**
+ * Returns the part of the scene that is visible in this MapView.
+ */
+inline const QRectF &MapView::viewRect() const
 {
-    mViewInitialized = true;
+    return mViewRect;
 }
 
 } // namespace Tiled

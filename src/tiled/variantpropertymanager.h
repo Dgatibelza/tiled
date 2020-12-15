@@ -50,6 +50,8 @@ public:
     MapDocument *mapDocument;
 };
 
+class UnstyledGroup {};
+
 /**
  * Extension of the QtVariantPropertyManager that adds support for a filePath
  * data type.
@@ -73,6 +75,7 @@ public:
     static int tilesetParametersTypeId();
     static int alignmentTypeId();
     static int displayObjectRefTypeId();
+    static int unstyledGroupTypeId();
 
 public slots:
     void setValue(QtProperty *property, const QVariant &val) override;
@@ -91,11 +94,13 @@ private:
     void slotPropertyDestroyed(QtProperty *property);
     QString objectRefLabel(const MapObject *object) const;
 
-    struct Data {
-        QVariant value;
+    QMap<const QtProperty *, QVariant> mValues;
+
+    struct FilePathAttributes {
         QString filter;
+        bool directory = false;
     };
-    QMap<const QtProperty *, Data> mValues;
+    QMap<const QtProperty *, FilePathAttributes> mFilePathAttributes;
 
     struct StringAttributes {
         QStringList suggestions;
@@ -116,6 +121,8 @@ private:
     PropertyToPropertyMap m_alignHToProperty;
     PropertyToPropertyMap m_alignVToProperty;
 
+    const QString mFilterAttribute;
+    const QString mDirectoryAttribute;
     const QString mSuggestionsAttribute;
     const QString mMultilineAttribute;
     QIcon mImageMissingIcon;
@@ -125,3 +132,4 @@ private:
 } // namespace Tiled
 
 Q_DECLARE_METATYPE(Tiled::DisplayObjectRef)
+Q_DECLARE_METATYPE(Tiled::UnstyledGroup)

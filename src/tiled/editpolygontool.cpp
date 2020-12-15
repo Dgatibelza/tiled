@@ -83,11 +83,17 @@ void EditPolygonTool::activate(MapScene *scene)
     // selection, and by only updating the handles of the objects that changed.
     connect(mapDocument(), &MapDocument::selectedObjectsChanged,
             this, &EditPolygonTool::updateHandles);
+
+    connect(scene, &MapScene::parallaxParametersChanged,
+            this, &EditPolygonTool::updateHandles);
 }
 
 void EditPolygonTool::deactivate(MapScene *scene)
 {
     disconnect(mapDocument(), &MapDocument::selectedObjectsChanged,
+               this, &EditPolygonTool::updateHandles);
+
+    disconnect(scene, &MapScene::parallaxParametersChanged,
                this, &EditPolygonTool::updateHandles);
 
     abortCurrentAction();
@@ -428,7 +434,7 @@ void EditPolygonTool::updateHandles()
 
         QPointF objectScreenPos = renderer->pixelToScreenCoords(object->position());
         QTransform rotate = rotateAt(objectScreenPos, object->rotation());
-        QPointF totalOffset = object->objectGroup()->totalOffset();
+        QPointF totalOffset = mapScene()->absolutePositionForLayer(*object->objectGroup());
 
         // Update the position of all handles
         for (int i = 0; i < pointHandles.size(); ++i) {
@@ -558,7 +564,7 @@ void EditPolygonTool::updateMovingItems(const QPointF &pos,
         MapObject *object = handle->mapObject();
         QPointF objectScreenPos = renderer->pixelToScreenCoords(object->position());
         QTransform rotate = rotateAt(objectScreenPos, -object->rotation());
-        newScreenPos = rotate.map(newScreenPos - object->objectGroup()->totalOffset());
+        newScreenPos = rotate.map(newScreenPos - mapScene()->absolutePositionForLayer(*object->objectGroup()));
         QPointF newPixelPos = renderer->screenToPixelCoords(newScreenPos);
 
         // update the polygon
@@ -657,7 +663,7 @@ void EditPolygonTool::showHandleContextMenu(QPoint screenPos)
 
     bool canDeleteSegment = false;
     if (n == 2) {
-        const PointHandle *secondHandle = *(mSelectedHandles.constBegin() + 1);
+        const PointHandle *secondHandle = *(++mSelectedHandles.constBegin());
         const MapObject *secondMapObject = secondHandle->mapObject();
 
         int indexDifference = std::abs(firstHandle->pointIndex() - secondHandle->pointIndex());
@@ -773,7 +779,7 @@ void EditPolygonTool::changeEvent(const ChangeEvent &event)
 
     switch (event.type) {
     case ChangeEvent::LayerChanged:
-        if (static_cast<const LayerChangeEvent&>(event).properties & LayerChangeEvent::OffsetProperty)
+        if (static_cast<const LayerChangeEvent&>(event).properties & LayerChangeEvent::PositionProperties)
             updateHandles();
         break;
     case ChangeEvent::MapObjectsChanged: {
@@ -1005,8 +1011,8 @@ void EditPolygonTool::deleteSegment()
     if (mSelectedHandles.size() != 2)
         return;
 
-    const auto &firstHandle = *mSelectedHandles.begin();
-    const auto &secondHandle = *(mSelectedHandles.begin() + 1);
+    PointHandle *firstHandle = *mSelectedHandles.constBegin();
+    PointHandle *secondHandle = *(++mSelectedHandles.constBegin());
 
     MapObject *mapObject = firstHandle->mapObject();
 
@@ -1100,7 +1106,7 @@ void EditPolygonTool::updateHover(const QPointF &scenePos, QGraphicsSceneMouseEv
                     continue;
 
                 // Translate mouse position to local pixel coordinates...
-                const QPointF totalOffset = object->objectGroup()->totalOffset();
+                const QPointF totalOffset = mapScene()->absolutePositionForLayer(*object->objectGroup());
                 const QPointF objectScreenPos = renderer->pixelToScreenCoords(object->position());
                 const QTransform rotate = rotateAt(objectScreenPos, -object->rotation());
                 const QPointF rotatedMouseScenePos = rotate.map(scenePos - totalOffset);

@@ -23,6 +23,7 @@
 #include "actionmanager.h"
 #include "addremovetileset.h"
 #include "changemapobject.h"
+#include "changetileobjectgroup.h"
 #include "documentmanager.h"
 #include "mapdocument.h"
 #include "map.h"
@@ -31,9 +32,9 @@
 #include "maprenderer.h"
 #include "mapscene.h"
 #include "objectgroup.h"
-#include "preferences.h"
 #include "raiselowerhelper.h"
 #include "resizemapobject.h"
+#include "session.h"
 #include "templatemanager.h"
 #include "tile.h"
 #include "tmxmapformat.h"
@@ -85,7 +86,6 @@ AbstractObjectTool::AbstractObjectTool(Id id,
                                        const QKeySequence &shortcut,
                                        QObject *parent)
     : AbstractTool(id, name, icon, shortcut, parent)
-    , mMapScene(nullptr)
 {
     QIcon flipHorizontalIcon(QLatin1String(":images/24/flip-horizontal.png"));
     QIcon flipVerticalIcon(QLatin1String(":images/24/flip-vertical.png"));
@@ -126,16 +126,6 @@ AbstractObjectTool::AbstractObjectTool(Id id,
     AbstractObjectTool::languageChanged();
 }
 
-void AbstractObjectTool::activate(MapScene *scene)
-{
-    mMapScene = scene;
-}
-
-void AbstractObjectTool::deactivate(MapScene *)
-{
-    mMapScene = nullptr;
-}
-
 void AbstractObjectTool::keyPressed(QKeyEvent *event)
 {
     switch (event->key()) {
@@ -165,14 +155,14 @@ void AbstractObjectTool::mouseMoved(const QPointF &pos,
     // Take into account the offset of the current layer
     QPointF offsetPos = pos;
     if (Layer *layer = currentLayer())
-        offsetPos -= layer->totalOffset();
+        offsetPos -= mapScene()->absolutePositionForLayer(*layer);
 
     const QPoint pixelPos = offsetPos.toPoint();
 
     const QPointF tilePosF = mapDocument()->renderer()->screenToTileCoords(offsetPos);
     const int x = qFloor(tilePosF.x());
     const int y = qFloor(tilePosF.y());
-    setStatusInfo(QString(QLatin1String("%1, %2 (%3, %4)")).arg(x).arg(y).arg(pixelPos.x()).arg(pixelPos.y()));
+    setStatusInfo(QStringLiteral("%1, %2 (%3, %4)").arg(x).arg(y).arg(pixelPos.x()).arg(pixelPos.y()));
 }
 
 void AbstractObjectTool::mousePressed(QGraphicsSceneMouseEvent *event)
@@ -214,7 +204,7 @@ ObjectGroup *AbstractObjectTool::currentObjectGroup() const
 
 QList<MapObject*> AbstractObjectTool::mapObjectsAt(const QPointF &pos) const
 {
-    const QList<QGraphicsItem *> &items = mMapScene->items(pos);
+    const QList<QGraphicsItem *> &items = mapScene()->items(pos);
 
     QList<MapObject*> objectList;
     for (auto item : items) {
@@ -230,7 +220,7 @@ QList<MapObject*> AbstractObjectTool::mapObjectsAt(const QPointF &pos) const
 
 MapObject *AbstractObjectTool::topMostMapObjectAt(const QPointF &pos) const
 {
-    const QList<QGraphicsItem *> &items = mMapScene->items(pos);
+    const QList<QGraphicsItem *> &items = mapScene()->items(pos);
 
     for (QGraphicsItem *item : items) {
         if (!item->isEnabled())
@@ -251,6 +241,56 @@ void AbstractObjectTool::duplicateObjects()
 void AbstractObjectTool::removeObjects()
 {
     mapDocument()->removeObjects(mapDocument()->selectedObjects());
+}
+
+/**
+ * Adds the selected collision shapes for the currently selected tile - the
+ * last selected tile - to all selected tiles.
+ */
+void AbstractObjectTool::applyCollisionsToSelectedTiles(bool replace)
+{
+    auto document = DocumentManager::instance()->currentDocument();
+    auto tilesetDocument = qobject_cast<TilesetDocument*>(document);
+    if (!tilesetDocument)
+        return;
+
+    const auto currentTile = dynamic_cast<Tile *>(tilesetDocument->currentObject());
+    if (!currentTile)
+        return;
+
+    auto undoStack = tilesetDocument->undoStack();
+    undoStack->beginMacro(tr("Apply Collision Shapes"));
+
+    // The selected collision objects
+    const auto &selectedObjects = mapDocument()->selectedObjects();
+
+    // Add each collision object to each selected tile apart from the current one
+    for (Tile *tile : tilesetDocument->selectedTiles()) {
+        if (tile == currentTile)
+            continue;
+
+        std::unique_ptr<ObjectGroup> objectGroup;
+
+        // Create a new group for collision objects if none exists or when replacing
+        if (!tile->objectGroup() || replace)
+            objectGroup = std::make_unique<ObjectGroup>();
+        else
+            objectGroup.reset(tile->objectGroup()->clone());
+
+        // Copy across the selected collision shapes
+        auto highestOjectId = objectGroup->highestObjectId();
+        for (MapObject *object : selectedObjects) {
+            MapObject *newObject = object->clone();
+            newObject->setId(++highestOjectId);
+            objectGroup->addObject(newObject);
+        }
+
+        undoStack->push(new ChangeTileObjectGroup(tilesetDocument,
+                                                  tile,
+                                                  std::move(objectGroup)));
+    }
+
+    undoStack->endMacro();
 }
 
 void AbstractObjectTool::resetTileSize()
@@ -282,14 +322,14 @@ static QString saveObjectTemplate(const MapObject *mapObject)
     QString filter = helper.filter();
     QString selectedFilter = XmlObjectTemplateFormat().nameFilter();
 
-    Preferences *prefs = Preferences::instance();
-    QString suggestedFileName = prefs->lastPath(Preferences::ObjectTemplateFile);
+    Session &session = Session::current();
+    QString suggestedFileName = session.lastPath(Session::ObjectTemplateFile);
     suggestedFileName += QLatin1Char('/');
     if (!mapObject->name().isEmpty())
         suggestedFileName += mapObject->name();
     else
         suggestedFileName += QCoreApplication::translate("Tiled::MainWindow", "untitled");
-    suggestedFileName += QLatin1String(".tx");
+    suggestedFileName += QStringLiteral(".tx");
 
     QWidget *parent = DocumentManager::instance()->widget()->window();
     QString fileName = QFileDialog::getSaveFileName(parent,
@@ -312,8 +352,7 @@ static QString saveObjectTemplate(const MapObject *mapObject)
         return QString();
     }
 
-    prefs->setLastPath(Preferences::ObjectTemplateFile,
-                       QFileInfo(fileName).path());
+    session.setLastPath(Session::ObjectTemplateFile, QFileInfo(fileName).path());
 
     return fileName;
 }
@@ -422,22 +461,22 @@ void AbstractObjectTool::rotateRight()
 
 void AbstractObjectTool::raise()
 {
-    RaiseLowerHelper(mMapScene).raise();
+    RaiseLowerHelper(mapScene()).raise();
 }
 
 void AbstractObjectTool::lower()
 {
-    RaiseLowerHelper(mMapScene).lower();
+    RaiseLowerHelper(mapScene()).lower();
 }
 
 void AbstractObjectTool::raiseToTop()
 {
-    RaiseLowerHelper(mMapScene).raiseToTop();
+    RaiseLowerHelper(mapScene()).raiseToTop();
 }
 
 void AbstractObjectTool::lowerToBottom()
 {
-    RaiseLowerHelper(mMapScene).lowerToBottom();
+    RaiseLowerHelper(mapScene()).lowerToBottom();
 }
 
 /**
@@ -456,6 +495,8 @@ void AbstractObjectTool::showContextMenu(MapObject *clickedObject,
         return;
 
     QMenu menu;
+    menu.setToolTipsVisible(true);
+
     QAction *duplicateAction = menu.addAction(tr("Duplicate %n Object(s)", "", selectedObjects.size()),
                                               this, &AbstractObjectTool::duplicateObjects);
     QAction *removeAction = menu.addAction(tr("Remove %n Object(s)", "", selectedObjects.size()),
@@ -464,11 +505,24 @@ void AbstractObjectTool::showContextMenu(MapObject *clickedObject,
     duplicateAction->setIcon(QIcon(QLatin1String(":/images/16/stock-duplicate-16.png")));
     removeAction->setIcon(QIcon(QLatin1String(":/images/16/edit-delete.png")));
 
+    // Allow the currently selected collision shapes to be applied to all selected tiles in the tileset editor
+    if (auto document = DocumentManager::instance()->currentDocument()) {
+        if (auto tilesetDocument = qobject_cast<TilesetDocument*>(document)) {
+            menu.addSeparator();
+            auto collisionMenu = menu.addMenu(tr("Apply Collision(s) to Selected Tiles"));
+            collisionMenu->setEnabled(tilesetDocument->selectedTiles().count() > 1);
+            collisionMenu->addAction(tr("Replace Existing Objects"), this, [this] { applyCollisionsToSelectedTiles(true); });
+            collisionMenu->addAction(tr("Add Objects"), this, [this] { applyCollisionsToSelectedTiles(false); });
+        }
+    }
+
     bool anyTileObjectSelected = std::any_of(selectedObjects.begin(),
                                              selectedObjects.end(),
                                              isTileObject);
 
     if (anyTileObjectSelected) {
+        menu.addSeparator();
+
         auto resetTileSizeAction = menu.addAction(tr("Reset Tile Size"), this, &AbstractObjectTool::resetTileSize);
         resetTileSizeAction->setEnabled(std::any_of(selectedObjects.begin(),
                                                     selectedObjects.end(),
@@ -478,6 +532,8 @@ void AbstractObjectTool::showContextMenu(MapObject *clickedObject,
         changeTileAction->setEnabled(tile() && (!selectedObjects.first()->isTemplateBase() ||
                                                 tile()->tileset()->isExternal()));
     }
+
+    menu.addSeparator();
 
     // Create action for replacing an object with a template
     auto replaceTemplateAction = menu.addAction(tr("Replace With Template"), this, &AbstractObjectTool::replaceObjectsWithTemplate);
@@ -495,9 +551,12 @@ void AbstractObjectTool::showContextMenu(MapObject *clickedObject,
 
         if (!(currentObject->isTemplateBase() || currentObject->isTemplateInstance())) {
             const Cell cell = selectedObjects.first()->cell();
-            // Saving objects with embedded tilesets is disabled
-            if (cell.isEmpty() || cell.tileset()->isExternal())
-                menu.addAction(tr("Save As Template"), this, &AbstractObjectTool::saveSelectedObject);
+            auto action = menu.addAction(tr("Save As Template"), this, &AbstractObjectTool::saveSelectedObject);
+
+            if (!cell.isEmpty() && !cell.tileset()->isExternal()) {
+                action->setEnabled(false);
+                action->setToolTip(tr("Can't create template with embedded tileset"));
+            }
         }
 
         if (currentObject->isTemplateBase()) { // Hide this operations for template base

@@ -37,13 +37,11 @@ class QToolBar;
 
 namespace Tiled {
 
-class Terrain;
 class Tile;
 class Tileset;
 
 class PropertiesDock;
 class TemplatesDock;
-class TerrainDock;
 class TileAnimationEditor;
 class TileCollisionDock;
 class TilesetDocument;
@@ -61,6 +59,8 @@ class TilesetEditor : public Editor
 
 public:
     explicit TilesetEditor(QObject *parent = nullptr);
+
+    TemplatesDock *templatesDock() const { return mTemplatesDock; }
 
     void saveState() override;
     void restoreState() override;
@@ -89,8 +89,8 @@ public:
 
     QAction *addTilesAction() const;
     QAction *removeTilesAction() const;
-    QAction *editTerrainAction() const;
     QAction *editCollisionAction() const;
+    QAction *editWangSetsAction() const;
     QAction *showAnimationEditor() const;
 
     TileAnimationEditor *tileAnimationEditor() const;
@@ -106,6 +106,9 @@ private:
     void currentChanged(const QModelIndex &index);
     void indexPressed(const QModelIndex &index);
 
+    void saveDocumentState(TilesetDocument *tilesetDocument) const;
+    void restoreDocumentState(TilesetDocument *tilesetDocument) const;
+
     void tilesetChanged();
     void selectedTilesChanged();
     void updateTilesetView(Tileset *tileset);
@@ -114,9 +117,6 @@ private:
     void addTiles(const QList<QUrl> &urls);
     void removeTiles();
 
-    void setEditTerrain(bool editTerrain);
-    void currentTerrainChanged(const Terrain *terrain);
-
     void setEditCollision(bool editCollision);
     void hasSelectedCollisionObjectsChanged();
 
@@ -124,17 +124,14 @@ private:
 
     void updateAddRemoveActions();
 
-    void addTerrainType();
-    void removeTerrainType();
-    void setTerrainImage(Tile *tile);
-
     void currentWangSetChanged(WangSet *wangSet);
     void currentWangIdChanged(WangId wangId);
-    void wangColorChanged(int color, bool edge);
+    void wangColorChanged(int color);
     void addWangSet();
+    void duplicateWangSet();
     void removeWangSet();
     void setWangSetImage(Tile *tile);
-    void setWangColorImage(Tile *tile, bool isEdge, int index);
+    void setWangColorImage(Tile *tile, int index);
     void setWangColorColor(WangColor *wangColor, const QColor &color);
 
     void onAnimationEditorClosed();
@@ -155,7 +152,6 @@ private:
 
     PropertiesDock *mPropertiesDock;
     UndoDock *mUndoDock;
-    TerrainDock *mTerrainDock;
     TileCollisionDock *mTileCollisionDock;
     TemplatesDock *mTemplatesDock;
     WangDock *mWangDock;

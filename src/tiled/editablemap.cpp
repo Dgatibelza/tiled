@@ -59,10 +59,6 @@ EditableMap::EditableMap(QObject *parent)
     , mSelectedArea(nullptr)
 {
     mDetachedMap.reset(map());
-
-    connect(map(), &Map::sizeChanged, this, &EditableMap::sizeChanged);
-    connect(map(), &Map::tileWidthChanged, this, &EditableMap::tileWidthChanged);
-    connect(map(), &Map::tileHeightChanged, this, &EditableMap::tileHeightChanged);
 }
 
 EditableMap::EditableMap(MapDocument *mapDocument, QObject *parent)
@@ -70,10 +66,6 @@ EditableMap::EditableMap(MapDocument *mapDocument, QObject *parent)
     , mReadOnly(false)
     , mSelectedArea(new EditableSelectedArea(mapDocument, this))
 {
-    connect(map(), &Map::sizeChanged, this, &EditableMap::sizeChanged);
-    connect(map(), &Map::tileWidthChanged, this, &EditableMap::tileWidthChanged);
-    connect(map(), &Map::tileHeightChanged, this, &EditableMap::tileHeightChanged);
-
     connect(mapDocument, &Document::fileNameChanged, this, &EditableAsset::fileNameChanged);
     connect(mapDocument, &Document::changed, this, &EditableMap::documentChanged);
     connect(mapDocument, &MapDocument::layerAdded, this, &EditableMap::attachLayer);
@@ -113,9 +105,14 @@ EditableMap::~EditableMap()
 QList<QObject *> EditableMap::tilesets() const
 {
     QList<QObject *> editableTilesets;
-    for (const SharedTileset &tileset : map()->tilesets())
+    auto &editableManager = EditableManager::instance();
+
+    for (const SharedTileset &tileset : map()->tilesets()) {
         if (auto document = TilesetDocument::findDocumentForTileset(tileset))
             editableTilesets.append(document->editable());
+        else
+            editableTilesets.append(editableManager.editableTileset(tileset.data()));
+    }
     return editableTilesets;
 }
 
@@ -211,6 +208,14 @@ void EditableMap::insertLayerAt(int index, EditableLayer *editableLayer)
     if (editableLayer->map()) {
         ScriptManager::instance().throwError(QCoreApplication::translate("Script Errors", "Layer already part of a map"));
         return;
+    }
+
+    // If this map has a valid size but the tile layer that's getting added
+    // doesn't, default the layer's size to the map size.
+    if (editableLayer->isTileLayer()) {
+        auto editableTileLayer = static_cast<EditableTileLayer*>(editableLayer);
+        if (editableTileLayer->size().isNull() && !size().isNull())
+            editableTileLayer->setSize(size());
     }
 
     if (auto doc = mapDocument()) {
@@ -663,3 +668,5 @@ void EditableMap::onCurrentLayerChanged(Layer *)
 }
 
 } // namespace Tiled
+
+#include "moc_editablemap.cpp"

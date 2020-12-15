@@ -75,6 +75,7 @@
     </widget>
     <addaction name="menuNew"/>
     <addaction name="actionOpen"/>
+    <addaction name="actionOpenFileInProject"/>
     <addaction name="menuRecentFiles"/>
     <addaction name="separator"/>
     <addaction name="actionSave"/>
@@ -122,10 +123,17 @@
       <string>Unload World</string>
      </property>
     </widget>
+    <widget class="QMenu" name="menuSaveWorld">
+     <property name="title">
+      <string>Save World</string>
+     </property>
+    </widget>
     <addaction name="actionAddExternalTileset"/>
     <addaction name="separator"/>
+    <addaction name="actionNewWorld"/>
     <addaction name="actionLoadWorld"/>
     <addaction name="menuUnloadWorld"/>
+    <addaction name="menuSaveWorld"/>
     <addaction name="separator"/>
     <addaction name="actionResizeMap"/>
     <addaction name="actionOffsetMap"/>
@@ -164,6 +172,7 @@
     <addaction name="menuShowObjectNames"/>
     <addaction name="actionShowTileAnimations"/>
     <addaction name="actionShowTileCollisionShapes"/>
+    <addaction name="actionEnableParallax"/>
     <addaction name="actionHighlightCurrentLayer"/>
     <addaction name="actionHighlightHoveredObject"/>
     <addaction name="separator"/>
@@ -207,6 +216,8 @@
     <addaction name="separator"/>
     <addaction name="actionAddFolderToProject"/>
     <addaction name="actionRefreshProjectFolders"/>
+    <addaction name="separator"/>
+    <addaction name="actionProjectProperties"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuEdit"/>
@@ -654,6 +665,11 @@
     <string>Load World...</string>
    </property>
   </action>
+  <action name="actionNewWorld">
+   <property name="text">
+    <string>New World...</string>
+   </property>
+  </action>
   <action name="actionHighlightHoveredObject">
    <property name="checkable">
     <bool>true</bool>
@@ -734,7 +750,43 @@
     <string>Reopen Closed File</string>
    </property>
    <property name="shortcut">
-    <string>Ctrl+Shift+T</string>
+    <string notr="true">Ctrl+Shift+T</string>
+   </property>
+  </action>
+  <action name="actionWorldMoveMap">
+   <property name="text">
+    <string>Move Map</string>
+   </property>
+   <property name="toolTip">
+    <string>Move Map</string>
+   </property>
+   <property name="shortcut">
+    <string notr="true">Ctrl+Shift+M</string>
+   </property>
+  </action>
+  <action name="actionProjectProperties">
+   <property name="icon">
+    <iconset resource="tiled.qrc">
+     <normaloff>:/images/16/document-properties.png</normaloff>:/images/16/document-properties.png</iconset>
+   </property>
+   <property name="text">
+    <string>Project &amp;Properties...</string>
+   </property>
+  </action>
+  <action name="actionOpenFileInProject">
+   <property name="text">
+    <string>Open File in &amp;Project...</string>
+   </property>
+   <property name="shortcut">
+    <string notr="true">Ctrl+P</string>
+   </property>
+  </action>
+  <action name="actionEnableParallax">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Enable Parallax</string>
    </property>
   </action>
  </widget>

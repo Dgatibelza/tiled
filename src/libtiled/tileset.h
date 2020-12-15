@@ -36,7 +36,6 @@
 #include <QList>
 #include <QPixmap>
 #include <QPoint>
-#include <QPointer>
 #include <QSharedPointer>
 #include <QString>
 #include <QVector>
@@ -49,7 +48,6 @@ namespace Tiled {
 
 class Tile;
 class Tileset;
-class TilesetFormat;
 class Terrain;
 class WangSet;
 
@@ -65,8 +63,6 @@ typedef QSharedPointer<Tileset> SharedTileset;
  */
 class TILEDSHARED_EXPORT Tileset : public Object
 {
-    Q_OBJECT
-
 public:
     /**
      * The orientation of the tileset determines the projection used in the
@@ -115,8 +111,8 @@ public:
     void setFileName(const QString &fileName);
     bool isExternal() const;
 
-    void setFormat(TilesetFormat *format);
-    TilesetFormat *format() const;
+    void setFormat(const QString &format);
+    QString format() const;
 
     int tileWidth() const;
     int tileHeight() const;
@@ -199,10 +195,9 @@ public:
     int wangSetCount() const;
     WangSet *wangSet(int index) const;
 
-    void addWangSet(WangSet *wangSet);
     void addWangSet(std::unique_ptr<WangSet> wangSet);
-    void insertWangSet(int index, WangSet *wangSet);
-    WangSet *takeWangSetAt(int index);
+    void insertWangSet(int index, std::unique_ptr<WangSet> wangSet);
+    std::unique_ptr<WangSet> takeWangSetAt(int index);
 
     Tile *addTile(const QPixmap &image, const QUrl &source = QUrl());
     void addTiles(const QList<Tile*> &tiles);
@@ -228,6 +223,18 @@ public:
     void setImageStatus(LoadingStatus status);
     LoadingStatus status() const;
     LoadingStatus imageStatus() const;
+
+    enum TransformationFlag {
+        NoTransformation        = 0,
+        AllowFlipHorizontally   = 1 << 0,
+        AllowFlipVertically     = 1 << 1,
+        AllowRotate             = 1 << 2,
+        PreferUntransformed     = 1 << 3,
+    };
+    Q_DECLARE_FLAGS(TransformationFlags, TransformationFlag)
+
+    TransformationFlags transformationFlags() const;
+    void setTransformationFlags(TransformationFlags flags);
 
     void swap(Tileset &other);
 
@@ -276,7 +283,8 @@ private:
     bool mTerrainDistancesDirty;
     LoadingStatus mStatus;
     QColor mBackgroundColor;
-    QPointer<TilesetFormat> mFormat;
+    QString mFormat;
+    TransformationFlags mTransformationFlags;
 
     QWeakPointer<Tileset> mWeakPointer;
     QWeakPointer<Tileset> mOriginalTileset;
@@ -687,6 +695,19 @@ inline LoadingStatus Tileset::imageStatus() const
     return mImageReference.status;
 }
 
+inline Tileset::TransformationFlags Tileset::transformationFlags() const
+{
+    return mTransformationFlags;
+}
+
+inline void Tileset::setTransformationFlags(TransformationFlags flags)
+{
+    mTransformationFlags = flags;
+}
+
 } // namespace Tiled
 
+Q_DECLARE_METATYPE(Tiled::Tileset*)
 Q_DECLARE_METATYPE(Tiled::SharedTileset)
+
+Q_DECLARE_OPERATORS_FOR_FLAGS(Tiled::Tileset::TransformationFlags)

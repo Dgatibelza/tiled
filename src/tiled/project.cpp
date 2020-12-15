@@ -27,32 +27,62 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include "qtcompat_p.h"
+
 namespace Tiled {
 
 static QString relative(const QDir &dir, const QString &fileName)
 {
     QString rel = dir.relativeFilePath(fileName);
-    return rel.isEmpty() ? QString(QLatin1String(".")) : rel;
+    return rel.isEmpty() ? QStringLiteral(".") : rel;
+}
+
+static QString absolute(const QDir &dir, const QString &fileName)
+{
+    if (fileName.isEmpty())
+        return QString();
+
+    return QDir::cleanPath(dir.absoluteFilePath(fileName));
 }
 
 Project::Project()
 {
 }
 
+bool Project::save()
+{
+    if (!mFileName.isEmpty())
+        return save(mFileName);
+    return false;
+}
+
 bool Project::save(const QString &fileName)
 {
-    QJsonObject project;
+    QString extensionsPath = mExtensionsPath;
+
+    // Initialize extensions path to its default value
+    if (mFileName.isEmpty() && extensionsPath.isEmpty())
+        extensionsPath = QFileInfo(fileName).dir().filePath(QLatin1String("extensions"));
 
     const QDir dir = QFileInfo(fileName).dir();
 
     QJsonArray folders;
-
-    for (auto &folder : mFolders)
+    for (auto &folder : qAsConst(mFolders))
         folders.append(relative(dir, folder));
 
-    project.insert(QLatin1String("folders"), folders);
+    QJsonArray commands;
+    for (const Command &command : qAsConst(mCommands))
+        commands.append(QJsonObject::fromVariantHash(command.toVariant()));
 
-    QJsonDocument document(project);
+    const QJsonObject project {
+        { QStringLiteral("folders"), folders },
+        { QStringLiteral("extensionsPath"), relative(dir, extensionsPath) },
+        { QStringLiteral("objectTypesFile"), dir.relativeFilePath(mObjectTypesFile) },
+        { QStringLiteral("automappingRulesFile"), dir.relativeFilePath(mAutomappingRulesFile) },
+        { QStringLiteral("commands"), commands }
+    };
+
+    const QJsonDocument document(project);
 
     SaveFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
@@ -62,7 +92,9 @@ bool Project::save(const QString &fileName)
     if (!file.commit())
         return false;
 
+    mLastSaved = QFileInfo(fileName).lastModified();
     mFileName = fileName;
+    mExtensionsPath = extensionsPath;
     return true;
 }
 
@@ -73,21 +105,30 @@ bool Project::load(const QString &fileName)
         return false;
 
     QJsonParseError error;
-    QByteArray json = file.readAll();
-    QJsonDocument document(QJsonDocument::fromJson(json, &error));
+    const QByteArray json = file.readAll();
+    const QJsonDocument document(QJsonDocument::fromJson(json, &error));
     if (error.error != QJsonParseError::NoError)
         return false;
 
-    mFolders.clear();
     mFileName = fileName;
 
     const QDir dir = QFileInfo(fileName).dir();
 
-    QJsonObject project = document.object();
+    const QJsonObject project = document.object();
 
+    mExtensionsPath = absolute(dir, project.value(QLatin1String("extensionsPath")).toString(QLatin1String("extensions")));
+    mObjectTypesFile = absolute(dir, project.value(QLatin1String("objectTypesFile")).toString());
+    mAutomappingRulesFile = absolute(dir, project.value(QLatin1String("automappingRulesFile")).toString());
+
+    mFolders.clear();
     const QJsonArray folders = project.value(QLatin1String("folders")).toArray();
     for (const QJsonValue &folderValue : folders)
         mFolders.append(QDir::cleanPath(dir.absoluteFilePath(folderValue.toString())));
+
+    mCommands.clear();
+    const QJsonArray commands = project.value(QLatin1String("commands")).toArray();
+    for (const QJsonValue &commandValue : commands)
+        mCommands.append(Command::fromVariant(commandValue.toVariant()));
 
     return true;
 }

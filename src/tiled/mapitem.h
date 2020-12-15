@@ -41,6 +41,7 @@ class BorderItem;
 class LayerChangeEvent;
 class LayerItem;
 class MapObjectItem;
+class MapScene;
 class ObjectSelectionItem;
 class TileGridItem;
 class TileSelectionItem;
@@ -65,10 +66,15 @@ public:
             QGraphicsItem *parent = nullptr);
     ~MapItem() override;
 
+    enum { Type = UserType + 3 };
+    int type() const override { return Type; }
+
     MapDocument *mapDocument() const;
 
     void setDisplayMode(DisplayMode displayMode);
     void setShowTileCollisionShapes(bool enabled);
+
+    void updateLayerPositions();
 
     // QGraphicsItem
     QRectF boundingRect() const override;
@@ -85,6 +91,8 @@ protected:
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event) override;
 
 private:
+    bool isWorldToolSelected() const;
+
     /**
      * Repaints the specified \a region of the given \a tileLayer. The region
      * is in tile coordinates.
@@ -109,7 +117,7 @@ private:
     void tilesetReplaced(int index, Tileset *tileset);
 
     void objectsInserted(ObjectGroup *objectGroup, int first, int last);
-    void deleteObjectItems(const QList<MapObject*> &objects);
+    void deleteObjectItem(MapObject *object);
     void syncObjectItems(const QList<MapObject*> &objects);
     void objectsIndexChanged(ObjectGroup *objectGroup, int first, int last);
 

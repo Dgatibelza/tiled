@@ -33,14 +33,15 @@
 namespace Tiled {
 
 IssuesCounter::IssuesCounter(QWidget *parent)
-    : QAbstractButton(parent)
+    : QToolButton(parent)
     , mErrorIcon(new QLabel)
     , mErrorCount(new QLabel)
     , mWarningIcon(new QLabel)
     , mWarningCount(new QLabel)
 {
     auto layout = new QHBoxLayout;
-    layout->setMargin(Utils::dpiScaled(2));
+    const int margin = Utils::dpiScaled(2);
+    layout->setContentsMargins(margin, margin, margin, margin);
 
     int spacing = Utils::dpiScaled(5);
     layout->addSpacing(spacing);
@@ -51,6 +52,7 @@ IssuesCounter::IssuesCounter(QWidget *parent)
     layout->addSpacing(spacing);
 
     setLayout(layout);
+    setAutoRaise(true);
 
     updateLabels();
 
@@ -58,10 +60,9 @@ IssuesCounter::IssuesCounter(QWidget *parent)
     connect(&issuesModel, &IssuesModel::rowsInserted, this, &IssuesCounter::updateLabels);
     connect(&issuesModel, &IssuesModel::rowsRemoved, this, &IssuesCounter::updateLabels);
     connect(&issuesModel, &IssuesModel::modelReset, this, &IssuesCounter::updateLabels);
-
-    connect(this, &QAbstractButton::clicked, &issuesModel, &IssuesModel::counterClicked);
 }
 
+// Override paintEvent because we don't want to draw the button's text
 void IssuesCounter::paintEvent(QPaintEvent *event)
 {
     QStylePainter p(this);
@@ -109,7 +110,7 @@ void IssuesCounter::updateLabels()
     const QString errorText = tr("%n error(s)", "", errorCount);
     const QString warningText = tr("%n warning(s)", "", warningCount);
 
-    setToolTip(QString(QLatin1String("%1, %2")).arg(errorText, warningText));
+    setToolTip(QStringLiteral("%1, %2").arg(errorText, warningText));
 }
 
 } // namespace Tiled

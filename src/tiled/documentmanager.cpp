@@ -38,6 +38,8 @@
 #include "mapview.h"
 #include "noeditorwidget.h"
 #include "preferences.h"
+#include "projectmanager.h"
+#include "session.h"
 #include "tabbar.h"
 #include "terrain.h"
 #include "tilesetdocument.h"
@@ -46,6 +48,8 @@
 #include "tmxmapformat.h"
 #include "utils.h"
 #include "wangset.h"
+#include "worlddocument.h"
+#include "worldmanager.h"
 #include "zoomable.h"
 
 #include <QCoreApplication>
@@ -57,7 +61,6 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QScrollBar>
-#include <QSettings>
 #include <QStackedLayout>
 #include <QTabBar>
 #include <QTabWidget>
@@ -74,15 +77,13 @@ DocumentManager *DocumentManager::mInstance;
 
 DocumentManager *DocumentManager::instance()
 {
-    if (!mInstance)
-        mInstance = new DocumentManager;
+    Q_ASSERT(mInstance);
     return mInstance;
 }
 
-void DocumentManager::deleteInstance()
+DocumentManager *DocumentManager::maybeInstance()
 {
-    delete mInstance;
-    mInstance = nullptr;
+    return mInstance;
 }
 
 DocumentManager::DocumentManager(QObject *parent)
@@ -99,6 +100,9 @@ DocumentManager::DocumentManager(QObject *parent)
     , mFileSystemWatcher(new FileSystemWatcher(this))
     , mMultiDocumentClose(false)
 {
+    Q_ASSERT(!mInstance);
+    mInstance = this;
+
     mBrokenLinksWidget->setVisible(false);
 
     mTabBar->setExpanding(false);
@@ -116,7 +120,7 @@ DocumentManager::DocumentManager(QObject *parent)
     vertical->addWidget(mTabBar);
     vertical->addWidget(mFileChangedWarning);
     vertical->addWidget(mBrokenLinksWidget);
-    vertical->setMargin(0);
+    vertical->setContentsMargins(0, 0, 0, 0);
     vertical->setSpacing(0);
 
     mEditorStack = new QStackedLayout;
@@ -132,14 +136,17 @@ DocumentManager::DocumentManager(QObject *parent)
     connect(mTabBar, &QWidget::customContextMenuRequested,
             this, &DocumentManager::tabContextMenuRequested);
 
-    connect(mFileSystemWatcher, &FileSystemWatcher::fileChanged,
-            this, &DocumentManager::fileChanged);
+    connect(mFileSystemWatcher, &FileSystemWatcher::pathsChanged,
+            this, &DocumentManager::filesChanged);
 
     connect(mBrokenLinksModel, &BrokenLinksModel::hasBrokenLinksChanged,
             mBrokenLinksWidget, &BrokenLinksWidget::setVisible);
 
     connect(TilesetManager::instance(), &TilesetManager::tilesetImagesChanged,
             this, &DocumentManager::tilesetImagesChanged);
+
+    connect(Preferences::instance(), &Preferences::aboutToSwitchSession,
+            this, &DocumentManager::updateSession);
 
     OpenFile::activated = [this] (const OpenFile &open) {
         openFile(open.file);
@@ -150,10 +157,13 @@ DocumentManager::DocumentManager(QObject *parent)
             auto renderer = mapDocument->renderer();
             auto mapView = viewForDocument(mapDocument);
             auto pos = renderer->tileToScreenCoords(jump.tilePos);
-            mapView->forceCenterOn(pos);
 
-            if (auto layer = mapDocument->map()->findLayerById(jump.layerId))
+            if (auto layer = mapDocument->map()->findLayerById(jump.layerId)) {
                 mapDocument->switchSelectedLayers({ layer });
+                mapView->forceCenterOn(pos, *layer);
+            } else {
+                mapView->forceCenterOn(pos);
+            }
         }
     };
 
@@ -211,7 +221,7 @@ DocumentManager::DocumentManager(QObject *parent)
             }
             break;
         }
-        case Document::TilesetDocumentType:
+        case Document::TilesetDocumentType: {
             auto tilesetDocument = static_cast<TilesetDocument*>(doc);
             switch (select.objectType) {
             case Object::MapObjectType:
@@ -247,6 +257,9 @@ DocumentManager::DocumentManager(QObject *parent)
             }
             break;
         }
+        case Document::WorldDocumentType:
+            break;
+        }
 
         if (obj) {
             doc->setCurrentObject(obj);
@@ -275,6 +288,10 @@ DocumentManager::DocumentManager(QObject *parent)
             }
         }
     };
+
+    WorldManager& worldManager = WorldManager::instance();
+    connect(&worldManager, &WorldManager::worldUnloaded,
+            this, &DocumentManager::onWorldUnloaded);
 }
 
 DocumentManager::~DocumentManager()
@@ -283,6 +300,8 @@ DocumentManager::~DocumentManager()
     Q_ASSERT(mDocuments.isEmpty());
     Q_ASSERT(mTilesetDocumentsModel->rowCount() == 0);
     delete mWidget;
+
+    mInstance = nullptr;
 }
 
 /**
@@ -443,6 +462,52 @@ void DocumentManager::switchToDocument(MapDocument *mapDocument, QPointF viewCen
     view->forceCenterOn(viewCenter);
 }
 
+/**
+ * Switches to the given \a mapDocument, taking tilsets into accout
+ */
+void DocumentManager::switchToDocumentAndHandleSimiliarTileset(MapDocument *mapDocument, QPointF viewCenter, qreal scale)
+{
+    // Try selecting similar layers and tileset by name to the previously active mapitem
+    SharedTileset newSimilarTileset;
+
+    if (auto currentMapDocument = qobject_cast<MapDocument*>(currentDocument())) {
+        const Layer *currentLayer = currentMapDocument->currentLayer();
+        const QList<Layer*> selectedLayers = currentMapDocument->selectedLayers();
+
+        if (currentLayer) {
+            Layer *newCurrentLayer = mapDocument->map()->findLayer(currentLayer->name(),
+                                                                   currentLayer->layerType());
+            if (newCurrentLayer)
+                mapDocument->setCurrentLayer(newCurrentLayer);
+        }
+
+        QList<Layer*> newSelectedLayers;
+        for (Layer *selectedLayer : selectedLayers) {
+            Layer *newSelectedLayer = mapDocument->map()->findLayer(selectedLayer->name(),
+                                                                    selectedLayer->layerType());
+            if (newSelectedLayer)
+                newSelectedLayers << newSelectedLayer;
+        }
+        if (!newSelectedLayers.isEmpty())
+            mapDocument->setSelectedLayers(newSelectedLayers);
+
+        Editor *currentEditor = DocumentManager::instance()->currentEditor();
+        if (auto currentMapEditor = qobject_cast<MapEditor*>(currentEditor)) {
+            if (SharedTileset currentTileset = currentMapEditor->currentTileset()) {
+                if (!mapDocument->map()->tilesets().contains(currentTileset))
+                    newSimilarTileset = currentTileset->findSimilarTileset(mapDocument->map()->tilesets());
+            }
+        }
+    }
+
+    DocumentManager::instance()->switchToDocument(mapDocument, viewCenter, scale);
+
+    Editor *newEditor = DocumentManager::instance()->currentEditor();
+    if (auto newMapEditor = qobject_cast<MapEditor*>(newEditor))
+        if (newSimilarTileset)
+            newMapEditor->setCurrentTileset(newSimilarTileset);
+}
+
 void DocumentManager::switchToLeftDocument()
 {
     const int tabCount = mTabBar->count();
@@ -537,8 +602,6 @@ void DocumentManager::insertDocument(int index, const DocumentPtr &document)
     if (mBrokenLinksModel->hasBrokenLinks())
         mBrokenLinksWidget->show();
 
-    updateSession();
-
     emit documentOpened(documentPtr);
 }
 
@@ -585,13 +648,9 @@ DocumentPtr DocumentManager::loadDocument(const QString &fileName,
 
     if (!fileFormat) {
         // Try to find a plugin that implements support for this format
-        const auto formats = PluginManager::objects<FileFormat>();
-        for (FileFormat *format : formats) {
-            if (format->supportsFile(fileName)) {
-                fileFormat = format;
-                break;
-            }
-        }
+        fileFormat = PluginManager::find<FileFormat>([&](FileFormat *format) {
+            return format->hasCapabilities(FileFormat::Read) && format->supportsFile(fileName);
+        });
     }
 
     if (!fileFormat) {
@@ -647,8 +706,6 @@ bool DocumentManager::saveDocument(Document *document, const QString &fileName)
  */
 bool DocumentManager::saveDocumentAs(Document *document)
 {
-    QSettings *settings = Preferences::instance()->settings();
-
     QString selectedFilter;
     QString fileName = document->fileName();
 
@@ -657,7 +714,7 @@ bool DocumentManager::saveDocumentAs(Document *document)
 
     auto getSaveFileName = [&](const QString &filter, const QString &defaultFileName) {
         if (fileName.isEmpty()) {
-            fileName = Preferences::instance()->fileDialogStartLocation();
+            fileName = fileDialogStartLocation();
             fileName += QLatin1Char('/');
             fileName += defaultFileName;
             fileName += Utils::firstExtension(selectedFilter);
@@ -692,10 +749,10 @@ bool DocumentManager::saveDocumentAs(Document *document)
 
     if (auto mapDocument = qobject_cast<MapDocument*>(document)) {
         FormatHelper<MapFormat> helper(FileFormat::ReadWrite);
+        SessionOption<QString> lastUsedMapFormat { "map.lastUsedFormat" };
 
         if (selectedFilter.isEmpty()) {
-            QString shortName = settings->value(QLatin1String("lastUsedMapFormat")).toString();
-            if (auto format = helper.findFormat(shortName))
+            if (auto format = helper.findFormat(lastUsedMapFormat))
                 selectedFilter = format->nameFilter();
         }
 
@@ -712,14 +769,14 @@ bool DocumentManager::saveDocumentAs(Document *document)
         mapDocument->setWriterFormat(format);
         mapDocument->setReaderFormat(format);
 
-        settings->setValue(QLatin1String("lastUsedMapFormat"), format->shortName());
+        lastUsedMapFormat = format->shortName();
 
     } else if (auto tilesetDocument = qobject_cast<TilesetDocument*>(document)) {
         FormatHelper<TilesetFormat> helper(FileFormat::ReadWrite);
+        SessionOption<QString> lastUsedTilesetFormat { "tileset.lastUsedFormat" };
 
         if (selectedFilter.isEmpty()) {
-            QString shortName = settings->value(QLatin1String("lastUsedTilesetFormat")).toString();
-            if (auto format = helper.findFormat(shortName))
+            if (auto format = helper.findFormat(lastUsedTilesetFormat))
                 selectedFilter = format->nameFilter();
         }
 
@@ -737,7 +794,7 @@ bool DocumentManager::saveDocumentAs(Document *document)
         TilesetFormat *format = helper.formatByNameFilter(selectedFilter);
         tilesetDocument->setWriterFormat(format);
 
-        settings->setValue(QLatin1String("lastUsedTilesetFormat"), format->shortName());
+        lastUsedTilesetFormat = format->shortName();
     }
 
     return saveDocument(document, fileName);
@@ -839,8 +896,6 @@ void DocumentManager::closeDocumentAt(int index)
 
     if (!document->fileName().isEmpty())
         Preferences::instance()->addRecentFile(document->fileName());
-
-    updateSession();
 }
 
 /**
@@ -871,9 +926,13 @@ bool DocumentManager::reloadDocumentAt(int index)
     QString error;
 
     if (auto mapDocument = oldDocument.objectCast<MapDocument>()) {
+        auto readerFormat = mapDocument->readerFormat();
+        if (!readerFormat)
+            return false;
+
         // TODO: Consider fixing the reload to avoid recreating the MapDocument
         auto newDocument = MapDocument::load(oldDocument->fileName(),
-                                             mapDocument->readerFormat(),
+                                             readerFormat,
                                              &error);
         if (!newDocument) {
             emit reloadError(tr("%1:\n\n%2").arg(oldDocument->fileName(), error));
@@ -917,8 +976,6 @@ void DocumentManager::currentIndexChanged()
 
     if (document) {
         editor = mEditorForType.value(document->type());
-        mUndoGroup->setActiveStack(document->undoStack());
-
         changed = isDocumentChangedOnDisk(document);
     }
 
@@ -937,8 +994,6 @@ void DocumentManager::currentIndexChanged()
     mFileChangedWarning->setVisible(changed);
 
     mBrokenLinksModel->setDocument(document);
-
-    updateSession();
 
     emit currentDocumentChanged(document);
 }
@@ -1012,20 +1067,17 @@ void DocumentManager::tabContextMenuRequested(const QPoint &pos)
 
     menu.addSeparator();
 
-    QAction *closeTab = menu.addAction(tr("Close"));
-    closeTab->setIcon(QIcon(QStringLiteral(":/images/16/window-close.png")));
-    Utils::setThemeIcon(closeTab, "window-close");
-    connect(closeTab, &QAction::triggered, [this, index] {
+    QAction *closeTab = menu.addAction(tr("Close"), [this, index] {
         documentCloseRequested(index);
     });
+    closeTab->setIcon(QIcon(QStringLiteral(":/images/16/window-close.png")));
+    Utils::setThemeIcon(closeTab, "window-close");
 
-    QAction *closeOtherTabs = menu.addAction(tr("Close Other Tabs"));
-    connect(closeOtherTabs, &QAction::triggered, [this, index] {
+    menu.addAction(tr("Close Other Tabs"), [this, index] {
         closeOtherDocuments(index);
     });
 
-    QAction *closeTabsToRight = menu.addAction(tr("Close Tabs to the Right"));
-    connect(closeTabsToRight, &QAction::triggered, [this, index] {
+    menu.addAction(tr("Close Tabs to the Right"), [this, index] {
         closeDocumentsToRight(index);
     });
 
@@ -1050,6 +1102,12 @@ void DocumentManager::tilesetNameChanged(Tileset *tileset)
     auto *tilesetDocument = findTilesetDocument(tileset->sharedPointer());
     if (tilesetDocument->isEmbedded())
         updateDocumentTab(tilesetDocument);
+}
+
+void DocumentManager::filesChanged(const QStringList &fileNames)
+{
+    for (const QString &fileName : fileNames)
+        fileChanged(fileName);
 }
 
 void DocumentManager::fileChanged(const QString &fileName)
@@ -1170,11 +1228,10 @@ void DocumentManager::updateSession() const
     }
 
     auto doc = currentDocument();
-    auto prefs = Preferences::instance();
 
-    prefs->session().setOpenFiles(fileList);
-    prefs->session().setActiveFile(doc ? doc->fileName() : QString());
-    prefs->saveSession();
+    auto &session = Session::current();
+    session.setOpenFiles(fileList);
+    session.setActiveFile(doc ? doc->fileName() : QString());
 }
 
 MapDocument *DocumentManager::openMapFile(const QString &path)
@@ -1189,6 +1246,61 @@ TilesetDocument *DocumentManager::openTilesetFile(const QString &path)
     openFile(path);
     const int i = findDocument(path);
     return i == -1 ? nullptr : qobject_cast<TilesetDocument*>(mDocuments.at(i).data());
+}
+
+WorldDocument *DocumentManager::ensureWorldDocument(const QString &fileName)
+{
+    if (!mWorldDocuments.contains(fileName)) {
+        WorldDocument* worldDocument = new WorldDocument(fileName);
+        mWorldDocuments.insert(fileName, worldDocument);
+        mUndoGroup->addStack(worldDocument->undoStack());
+    }
+    return mWorldDocuments[fileName];
+}
+
+bool DocumentManager::isAnyWorldModified() const
+{
+    for (const World *world : WorldManager::instance().worlds())
+        if (isWorldModified(world->fileName))
+            return true;
+
+    return false;
+}
+
+bool DocumentManager::isWorldModified(const QString &fileName) const
+{
+    if (const auto worldDocument = mWorldDocuments.value(fileName))
+        return !worldDocument->undoStack()->isClean();
+    return false;
+}
+
+/**
+ * Returns a logical start location for a file dialog to open a file, based on
+ * the currently selected file, a recent file, the project path or finally, the
+ * home location.
+ */
+QString DocumentManager::fileDialogStartLocation() const
+{
+    if (auto doc = currentDocument()) {
+        QString path = QFileInfo(doc->fileName()).path();
+        if (!path.isEmpty())
+            return path;
+    }
+
+    const auto &session = Session::current();
+    if (!session.recentFiles.isEmpty())
+        return QFileInfo(session.recentFiles.first()).path();
+
+    const auto &project = ProjectManager::instance()->project();
+    if (!project.fileName().isEmpty())
+        return QFileInfo(project.fileName()).path();
+
+    return Preferences::homeLocation();
+}
+
+void DocumentManager::onWorldUnloaded(const QString &worldFile)
+{
+    delete mWorldDocuments.take(worldFile);
 }
 
 static bool mayNeedColumnCountAdjustment(const Tileset &tileset)

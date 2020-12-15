@@ -46,11 +46,13 @@ class BrokenLinksWidget;
 class Document;
 class Editor;
 class FileChangedWarning;
+class MainWindow;
 class MapDocument;
 class MapEditor;
 class MapView;
 class TilesetDocument;
 class TilesetDocumentsModel;
+class WorldDocument;
 
 /**
  * This class controls the open documents.
@@ -64,9 +66,11 @@ class DocumentManager : public QObject
     DocumentManager(QObject *parent = nullptr);
     ~DocumentManager() override;
 
+    friend class MainWindow;
+
 public:
     static DocumentManager *instance();
-    static void deleteInstance();
+    static DocumentManager *maybeInstance();
 
     QWidget *widget() const;
 
@@ -94,6 +98,7 @@ public:
     bool switchToDocument(const QString &fileName);
     bool switchToDocument(Document *document);
     void switchToDocument(MapDocument *mapDocument, QPointF viewCenter, qreal scale);
+    void switchToDocumentAndHandleSimiliarTileset(MapDocument *mapDocument, QPointF viewCenter, qreal scale);
 
     void addDocument(const DocumentPtr &document);
     void insertDocument(int index, const DocumentPtr &document);
@@ -130,6 +135,12 @@ public:
     void openTileset(const SharedTileset &tileset);
 
     void abortMultiDocumentClose();
+
+    WorldDocument *ensureWorldDocument(const QString &fileName);
+    bool isAnyWorldModified() const;
+    bool isWorldModified(const QString &fileName) const;
+
+    QString fileDialogStartLocation() const;
 
 signals:
     void documentCreated(Document *document);
@@ -178,6 +189,8 @@ public slots:
     void saveFile();
 
 private:
+    void onWorldUnloaded(const QString &worldFile);
+
     void currentIndexChanged();
     void fileNameChanged(const QString &fileName,
                          const QString &oldFileName);
@@ -191,6 +204,7 @@ private:
 
     void tilesetNameChanged(Tileset *tileset);
 
+    void filesChanged(const QStringList &fileNames);
     void fileChanged(const QString &fileName);
     void hideChangedWarning();
 
@@ -207,6 +221,7 @@ private:
     TilesetDocument *openTilesetFile(const QString &path);
 
     QVector<DocumentPtr> mDocuments;
+    QMap<QString, WorldDocument*> mWorldDocuments;
     TilesetDocumentsModel *mTilesetDocumentsModel;
 
     // Pointer becomes null when deleted as part of the UI, to prevent double-deletion

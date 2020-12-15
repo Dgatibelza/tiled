@@ -22,8 +22,13 @@
 
 #include "actionmanager.h"
 #include "documentmanager.h"
+#include "mapdocumentactionhandler.h"
+#include "objecttemplate.h"
 #include "preferences.h"
+#include "projectmanager.h"
 #include "projectmodel.h"
+#include "session.h"
+#include "templatemanager.h"
 #include "utils.h"
 
 #include <QBoxLayout>
@@ -31,8 +36,8 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QScrollBar>
 #include <QSet>
-#include <QStandardPaths>
 #include <QTreeView>
 
 namespace Tiled {
@@ -53,12 +58,15 @@ public:
     QSize sizeHint() const override;
 
     void setModel(QAbstractItemModel *model) override;
-
     ProjectModel *model() const { return mProjectModel; }
+
+    // TODO: Add 'select by file name'
 
     QStringList expandedPaths() const { return mExpandedPaths.values(); }
     void setExpandedPaths(const QStringList &paths);
     void addExpandedPath(const QString &path);
+
+    void selectPath(const QString &path);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -71,6 +79,8 @@ private:
 
     ProjectModel *mProjectModel;
     QSet<QString> mExpandedPaths;
+    QString mSelectedPath;
+    int mScrollBarValue = 0;
 };
 
 
@@ -82,7 +92,7 @@ ProjectDock::ProjectDock(QWidget *parent)
 
     auto widget = new QWidget(this);
     auto layout = new QVBoxLayout(widget);
-    layout->setMargin(0);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
     layout->addWidget(mProjectView);
@@ -90,19 +100,26 @@ ProjectDock::ProjectDock(QWidget *parent)
     setWidget(widget);
     retranslateUi();
 
-    auto prefs = Preferences::instance();
-    connect(prefs, &Preferences::aboutToSaveSession,
-            this, [this, prefs] { prefs->session().setExpandedProjectPaths(mProjectView->expandedPaths()); });
+    connect(Preferences::instance(), &Preferences::aboutToSwitchSession,
+            this, [this] { Session::current().expandedProjectPaths = mProjectView->expandedPaths(); });
+
+    connect(mProjectView->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, &ProjectDock::onCurrentRowChanged);
+
+    connect(mProjectView->model(), &ProjectModel::folderAdded, this, &ProjectDock::folderAdded);
+    connect(mProjectView->model(), &ProjectModel::folderRemoved, this, &ProjectDock::folderRemoved);
 }
 
 void ProjectDock::addFolderToProject()
 {
-    QString folder = QFileInfo(project().fileName()).path();
+    Project &project = ProjectManager::instance()->project();
+
+    QString folder = QFileInfo(project.fileName()).path();
     if (folder.isEmpty()) {
-        if (!project().folders().isEmpty())
-            folder = QFileInfo(project().folders().last()).path();
+        if (!project.folders().isEmpty())
+            folder = QFileInfo(project.folders().last()).path();
         else
-            folder = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+            folder = Preferences::homeLocation();
     }
 
     folder = QFileDialog::getExistingDirectory(window(),
@@ -115,9 +132,7 @@ void ProjectDock::addFolderToProject()
     mProjectView->model()->addFolder(folder);
     mProjectView->addExpandedPath(folder);
 
-    auto &p = project();
-    if (!p.fileName().isEmpty())
-        p.save(p.fileName());
+    project.save();
 }
 
 void ProjectDock::refreshProjectFolders()
@@ -142,14 +157,19 @@ void ProjectDock::changeEvent(QEvent *e)
     }
 }
 
-Project &ProjectDock::project() const
+void ProjectDock::onCurrentRowChanged(const QModelIndex &current)
 {
-    return mProjectView->model()->project();
+    if (!current.isValid())
+        return;
+
+    const auto filePath = mProjectView->model()->filePath(current);
+    if (QFileInfo { filePath }.isFile())
+        emit fileSelected(filePath);
 }
 
-void ProjectDock::setProject(Project project)
+void ProjectDock::selectFile(const QString &filePath)
 {
-    mProjectView->model()->setProject(std::move(project));
+    mProjectView->selectPath(filePath);
 }
 
 void ProjectDock::retranslateUi()
@@ -166,8 +186,9 @@ ProjectView::ProjectView(QWidget *parent)
     setUniformRowHeights(true);
     setDragEnabled(true);
     setDefaultDropAction(Qt::MoveAction);
+    setDragDropMode(QAbstractItemView::DragOnly);
 
-    auto model = new ProjectModel(this);
+    auto model = ProjectManager::instance()->projectModel();
     setModel(model);
 
     connect(this, &QAbstractItemView::activated,
@@ -180,11 +201,23 @@ ProjectView::ProjectView(QWidget *parent)
             this, [=] (const QModelIndex &index) { mExpandedPaths.insert(model->filePath(index)); });
     connect(this, &QTreeView::collapsed,
             this, [=] (const QModelIndex &index) { mExpandedPaths.remove(model->filePath(index)); });
+
+    // Reselect a previously selected path and restore scrollbar after refresh
+    connect(model, &ProjectModel::aboutToRefresh,
+            this, [=] {
+        mSelectedPath = model->filePath(currentIndex());
+        mScrollBarValue = verticalScrollBar()->value();
+    });
+    connect(model, &ProjectModel::refreshed,
+            this, [=] {
+        selectPath(mSelectedPath);
+        verticalScrollBar()->setValue(mScrollBarValue);
+    });
 }
 
 QSize ProjectView::sizeHint() const
 {
-    return Utils::dpiScaled(QSize(130, 200));
+    return Utils::dpiScaled(QSize(250, 200));
 }
 
 void ProjectView::setModel(QAbstractItemModel *model)
@@ -208,6 +241,13 @@ void ProjectView::addExpandedPath(const QString &path)
     mExpandedPaths.insert(path);
 }
 
+void ProjectView::selectPath(const QString &path)
+{
+    auto index = model()->index(path);
+    if (index.isValid())
+        setCurrentIndex(index);
+}
+
 void ProjectView::contextMenuEvent(QContextMenuEvent *event)
 {
     const QModelIndex index = indexAt(event->pos());
@@ -215,13 +255,28 @@ void ProjectView::contextMenuEvent(QContextMenuEvent *event)
     QMenu menu;
 
     if (index.isValid()) {
+        const auto filePath = model()->filePath(index);
+
+        Utils::addFileManagerActions(menu, filePath);
+
+        if (QFileInfo { filePath }.isFile()) {
+            Utils::addOpenWithSystemEditorAction(menu, filePath);
+
+            auto objectTemplate = TemplateManager::instance()->loadObjectTemplate(filePath);
+            if (objectTemplate->object()) {
+                menu.addSeparator();
+                auto action = menu.addAction(tr("Select Template Instances"), [objectTemplate] {
+                    MapDocumentActionHandler::instance()->selectAllInstances(objectTemplate);
+                });
+                action->setEnabled(MapDocumentActionHandler::instance()->mapDocument() != nullptr);
+            }
+        }
+
         if (!index.parent().isValid()) {
+            menu.addSeparator();
             auto removeFolder = menu.addAction(tr("&Remove Folder from Project"), [=] {
                 model()->removeFolder(index.row());
-
-                auto &p = model()->project();
-                if (!p.fileName().isEmpty())
-                    p.save(p.fileName());
+                model()->project().save();
             });
             Utils::setThemeIcon(removeFolder, "list-remove");
         }
@@ -237,7 +292,7 @@ void ProjectView::contextMenuEvent(QContextMenuEvent *event)
 void ProjectView::onActivated(const QModelIndex &index)
 {
     const QString path = model()->filePath(index);
-    if (!QFileInfo(path).isDir())
+    if (QFileInfo(path).isFile())
         DocumentManager::instance()->openFile(path);
 }
 

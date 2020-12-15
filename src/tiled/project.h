@@ -20,7 +20,11 @@
 
 #pragma once
 
+#include "command.h"
+
+#include <QDateTime>
 #include <QStringList>
+#include <QVector>
 
 namespace Tiled {
 
@@ -30,16 +34,23 @@ public:
     Project();
 
     const QString &fileName() const;
+    bool save();
     bool save(const QString &fileName);
     bool load(const QString &fileName);
 
     void addFolder(const QString &folder);
     void removeFolder(int index);
-    void refreshFolders();
-
     const QStringList &folders() const;
 
+    const QDateTime &lastSaved() const;
+
+    QString mExtensionsPath;
+    QString mObjectTypesFile;
+    QString mAutomappingRulesFile;
+    QVector<Command> mCommands;
+
 private:
+    QDateTime mLastSaved;
     QString mFileName;
     QStringList mFolders;
 };
@@ -53,6 +64,11 @@ inline const QString &Project::fileName() const
 inline const QStringList &Project::folders() const
 {
     return mFolders;
+}
+
+inline const QDateTime &Project::lastSaved() const
+{
+    return mLastSaved;
 }
 
 } // namespace Tiled

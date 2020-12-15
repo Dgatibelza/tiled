@@ -35,6 +35,7 @@
 #include "tile.h"
 #include "tilelayer.h"
 #include "tileset.h"
+#include "wangset.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -67,6 +68,7 @@ public:
     void writeTileset(const Tiled::Tileset &,
                       unsigned firstGid,
                       bool embedded = true);
+    void writeWangSet(const Tiled::WangSet &);
     void writeLayers(const QList<Tiled::Layer*> &layers,
                      Tiled::Map::LayerDataFormat format,
                      int compressionLevel,
@@ -79,7 +81,7 @@ public:
                             QRect bounds,
                             int compressionLevel);
     void writeObjectGroup(const Tiled::ObjectGroup *,
-                          const QByteArray &key = QByteArray());
+                          const char *key = nullptr);
     void writeImageLayer(const Tiled::ImageLayer *);
     void writeGroupLayer(const Tiled::GroupLayer *,
                          Tiled::Map::LayerDataFormat,
@@ -142,7 +144,7 @@ QString LuaMapFormat::nameFilter() const
 
 QString LuaMapFormat::shortName() const
 {
-    return QLatin1String("lua");
+    return QStringLiteral("lua");
 }
 
 QString LuaMapFormat::errorString() const
@@ -187,7 +189,7 @@ QString LuaTilesetFormat::nameFilter() const
 
 QString LuaTilesetFormat::shortName() const
 {
-    return QLatin1String("lua");
+    return QStringLiteral("lua");
 }
 
 QString LuaTilesetFormat::errorString() const
@@ -206,7 +208,7 @@ void LuaWriter::writeMap(const Map *map)
     mWriter.writeStartDocument();
     mWriter.writeStartReturnTable();
 
-    mWriter.writeKeyAndValue("version", "1.2");
+    mWriter.writeKeyAndValue("version", "1.4");
     mWriter.writeKeyAndValue("luaversion", "5.1");
     mWriter.writeKeyAndValue("tiledversion", QCoreApplication::applicationVersion());
 
@@ -262,8 +264,16 @@ void LuaWriter::writeProperties(const Properties &properties)
     Properties::const_iterator it = properties.constBegin();
     Properties::const_iterator it_end = properties.constEnd();
     for (; it != it_end; ++it) {
-        const QVariant value = toExportValue(it.value(), mDir);
-        mWriter.writeQuotedKeyAndValue(it.key(), value);
+        if (it.value().userType() == objectRefTypeId()) {
+            mWriter.writeStartTable(it.key());
+            mWriter.setSuppressNewlines(true);
+            mWriter.writeKeyAndValue("id", it.value().value<ObjectRef>().id);
+            mWriter.writeEndTable();
+            mWriter.setSuppressNewlines(false);
+        } else {
+            const QVariant value = toExportValue(it.value(), mDir);
+            mWriter.writeQuotedKeyAndValue(it.key(), value);
+        }
     }
 
     mWriter.writeEndTable();
@@ -299,7 +309,7 @@ void LuaWriter::writeTileset(const Tileset &tileset,
         mWriter.writeStartReturnTable();
 
         // Include version in external tilesets
-        mWriter.writeKeyAndValue("version", "1.2");
+        mWriter.writeKeyAndValue("version", "1.4");
         mWriter.writeKeyAndValue("luaversion", "5.1");
         mWriter.writeKeyAndValue("tiledversion", QCoreApplication::applicationVersion());
     }
@@ -369,6 +379,11 @@ void LuaWriter::writeTileset(const Tileset &tileset,
     }
     mWriter.writeEndTable();
 
+    mWriter.writeStartTable("wangsets");
+    for (int i = 0; i < tileset.wangSetCount(); ++i)
+        writeWangSet(*tileset.wangSet(i));
+    mWriter.writeEndTable();
+
     mWriter.writeKeyAndValue("tilecount", tileset.tileCount());
     mWriter.writeStartTable("tiles");
     for (const Tile *tile : tileset.tiles()) {
@@ -432,6 +447,52 @@ void LuaWriter::writeTileset(const Tileset &tileset,
 
     if (!embedded)
         mWriter.writeEndDocument();
+}
+
+void LuaWriter::writeWangSet(const WangSet &wangSet)
+{
+    mWriter.writeStartTable();
+
+    mWriter.writeKeyAndValue("name", wangSet.name());
+    mWriter.writeKeyAndValue("tile", wangSet.imageTileId());
+
+    writeProperties(wangSet.properties());
+
+    mWriter.writeStartTable("colors");
+    for (int i = 1; i <= wangSet.colorCount(); ++i) {
+        const WangColor &wangColor = *wangSet.colorAt(i);
+        mWriter.writeStartTable();
+
+        writeColor("color", wangColor.color());
+        mWriter.writeKeyAndValue("name", wangColor.name());
+        mWriter.writeKeyAndValue("probability", wangColor.probability());
+        mWriter.writeKeyAndValue("tile", wangColor.imageId());
+
+        writeProperties(wangColor.properties());
+
+        mWriter.writeEndTable();
+    }
+    mWriter.writeEndTable();
+
+    mWriter.writeStartTable("wangtiles");
+    const auto wangTiles = wangSet.sortedWangTiles();
+    for (const WangTile &wangTile : wangTiles) {
+        mWriter.writeStartTable();
+
+        mWriter.writeStartTable("wangid");
+        mWriter.setSuppressNewlines(true);
+        for (int i = 0; i < WangId::NumIndexes; ++i)
+            mWriter.writeValue(wangTile.wangId().indexColor(i));
+        mWriter.writeEndTable();
+        mWriter.setSuppressNewlines(false);
+
+        mWriter.writeKeyAndValue("tileid", wangTile.tileId());
+
+        mWriter.writeEndTable();
+    }
+    mWriter.writeEndTable();
+
+    mWriter.writeEndTable();
 }
 
 void LuaWriter::writeLayers(const QList<Layer *> &layers,
@@ -558,12 +619,12 @@ void LuaWriter::writeTileLayerData(const TileLayer *tileLayer,
 }
 
 void LuaWriter::writeObjectGroup(const ObjectGroup *objectGroup,
-                                 const QByteArray &key)
+                                 const char *key)
 {
-    if (key.isEmpty())
-        mWriter.writeStartTable();
-    else
+    if (key)
         mWriter.writeStartTable(key);
+    else
+        mWriter.writeStartTable();
 
     mWriter.writeKeyAndValue("type", "objectgroup");
     mWriter.writeKeyAndValue("draworder", drawOrderToString(objectGroup->drawOrder()));
@@ -691,6 +752,10 @@ void LuaWriter::writeLayerProperties(const Layer *layer)
     const QPointF offset = layer->offset();
     mWriter.writeKeyAndValue("offsetx", offset.x());
     mWriter.writeKeyAndValue("offsety", offset.y());
+
+    const QPointF parallaxFactor = layer->parallaxFactor();
+    mWriter.writeKeyAndValue("parallaxx", parallaxFactor.x());
+    mWriter.writeKeyAndValue("parallaxy", parallaxFactor.y());
 
     if (layer->tintColor().isValid())
         writeColor("tintcolor", layer->tintColor());

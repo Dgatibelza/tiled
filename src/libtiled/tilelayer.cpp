@@ -41,6 +41,25 @@ using namespace Tiled;
 
 Cell Cell::empty;
 
+void Cell::rotate(RotateDirection direction)
+{
+    constexpr unsigned char rotateMasks[2][8] = {
+        { 3, 2, 7, 6, 1, 0, 5, 4 },
+        { 5, 4, 1, 0, 7, 6, 3, 2 },
+    };
+
+    unsigned char mask =
+            (flippedHorizontally() << 2) |
+            (flippedVertically() << 1) |
+            (flippedAntiDiagonally() << 0);
+
+    mask = rotateMasks[direction][mask];
+
+    setFlippedHorizontally((mask & 4) != 0);
+    setFlippedVertically((mask & 2) != 0);
+    setFlippedAntiDiagonally((mask & 1) != 0);
+}
+
 QRegion Chunk::region(std::function<bool (const Cell &)> condition) const
 {
     QRegion region;
@@ -122,6 +141,7 @@ TileLayer::TileLayer(const QString &name, QPoint position, QSize size)
 
 static QMargins computeDrawMargins(const QSet<SharedTileset> &tilesets)
 {
+    // Not differentiating between width and height, because tiles could be rotated
     int maxTileSize = 0;
     QMargins offsetMargins;
 
@@ -139,6 +159,8 @@ static QMargins computeDrawMargins(const QSet<SharedTileset> &tilesets)
                                    offsetMargins);
     }
 
+    // Adding maxTileSize to top-right of the margins assumes a bottom-left tile
+    // alignment within the grid cell.
     return QMargins(offsetMargins.left(),
                     offsetMargins.top() + maxTileSize,
                     offsetMargins.right() + maxTileSize,

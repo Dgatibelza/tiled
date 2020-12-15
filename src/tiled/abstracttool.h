@@ -35,6 +35,7 @@
 class QEvent;
 class QKeyEvent;
 class QToolBar;
+class QUndoStack;
 
 namespace Tiled {
 
@@ -109,13 +110,13 @@ public:
      * Activates this tool. If the tool plans to add any items to the scene, it
      * probably wants to do it here.
      */
-    virtual void activate(MapScene *scene) = 0;
+    virtual void activate(MapScene *scene);
 
     /**
      * Deactivates this tool. Should do any necessary cleanup to make sure the
      * tool is no longer active.
      */
-    virtual void deactivate(MapScene *scene) = 0;
+    virtual void deactivate(MapScene *scene);
 
     virtual void keyPressed(QKeyEvent *);
 
@@ -170,6 +171,11 @@ public:
 
     void setMapDocument(MapDocument *mapDocument);
 
+    /**
+     * override to use a different undo stack than the one from the document.
+     */
+    virtual QUndoStack* undoStack() { return nullptr; }
+
 protected:
     virtual void changeEvent(const ChangeEvent &event);
 
@@ -184,6 +190,7 @@ protected:
     }
 
     MapDocument *mapDocument() const { return mMapDocument; }
+    MapScene *mapScene() const { return mMapScene; }
 
     Layer *currentLayer() const;
 
@@ -217,6 +224,7 @@ private:
 
     ToolManager *mToolManager = nullptr;
     MapDocument *mMapDocument = nullptr;
+    MapScene *mMapScene = nullptr;
 };
 
 

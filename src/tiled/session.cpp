@@ -20,128 +20,121 @@
 
 #include "session.h"
 
+#include "documentmanager.h"
 #include "preferences.h"
-#include "savefile.h"
+#include "utils.h"
 
-#include <QDir>
-#include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <QStandardPaths>
+
+#include "qtcompat_p.h"
 
 namespace Tiled {
 
-class JsonHelper
+FileHelper::FileHelper(const QString &fileName)
+    : mDir { QFileInfo(fileName).dir() }
+{}
+
+void FileHelper::setFileName(const QString &fileName)
 {
-public:
-    JsonHelper(const QString &fileName)
-        : mDir(QFileInfo(fileName).dir())
-    {}
+    mDir = QFileInfo(fileName).dir();
+}
 
-    QString relativeFileName(const QString &fileName) const
-    {
-        if (fileName.startsWith(mDir.path()))
-            return mDir.relativeFilePath(fileName);
-        return fileName;
-    }
+QStringList FileHelper::relative(const QStringList &fileNames) const
+{
+    QStringList result;
+    for (const QString &fileName : fileNames)
+        result.append(relative(fileName));
+    return result;
+}
 
-    QJsonArray relativeFileNames(const QStringList &fileNames) const
-    {
-        QJsonArray result;
-        for (const QString &fileName : fileNames)
-            result.append(relativeFileName(fileName));
-        return result;
-    }
+QStringList FileHelper::resolve(const QStringList &fileNames) const
+{
+    QStringList result;
+    for (const QString &fileName : fileNames)
+        result.append(resolve(fileName));
+    return result;
+}
 
-    QString resolveFileName(const QString &value) const
-    {
-        return QDir::cleanPath(mDir.filePath(value));
-    }
-
-    QString resolveFileName(const QJsonValue &value) const
-    {
-        return resolveFileName(value.toString());
-    }
-
-    QStringList resolveFileNames(const QJsonArray &array) const
-    {
-        QStringList result;
-        for (const QJsonValue &value : array)
-            result.append(resolveFileName(value));
-        return result;
-    }
-
-private:
-    QDir mDir;
-};
-
+QHash<const char*, Session::Callbacks> Session::mChangedCallbacks;
+std::unique_ptr<Session> Session::mCurrent;
 
 Session::Session(const QString &fileName)
-    : mFileName(fileName)
+    : FileHelper            { fileName }
+    , settings              { Utils::jsonSettings(fileName) }
+    , project               { resolve(get<QString>("project")) }
+    , recentFiles           { resolve(get<QStringList>("recentFiles")) }
+    , openFiles             { resolve(get<QStringList>("openFiles")) }
+    , expandedProjectPaths  { resolve(get<QStringList>("expandedProjectPaths")) }
+    , activeFile            { resolve(get<QString>("activeFile")) }
 {
+    const auto states = get<QVariantMap>("fileStates");
+    for (auto it = states.constBegin(); it != states.constEnd(); ++it)
+        fileStates.insert(resolve(it.key()), it.value().toMap());
+
+    mSyncSettingsTimer.setInterval(1000);
+    mSyncSettingsTimer.setSingleShot(true);
+    QObject::connect(&mSyncSettingsTimer, &QTimer::timeout, [this] { sync(); });
 }
 
-bool Session::save() const
+Session::~Session()
 {
-    SaveFile file(mFileName);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
-        return false;
-
-    QJsonObject jsonSession;
-    JsonHelper helper(mFileName);
-
-    jsonSession.insert(QLatin1String("project"), helper.relativeFileName(mProject));
-    jsonSession.insert(QLatin1String("recentFiles"), helper.relativeFileNames(mRecentFiles));
-    jsonSession.insert(QLatin1String("openFiles"), helper.relativeFileNames(mOpenFiles));
-    jsonSession.insert(QLatin1String("expandedProjectPaths"), helper.relativeFileNames(mExpandedProjectPaths));
-    jsonSession.insert(QLatin1String("activeFile"), helper.relativeFileName(mActiveFile));
-
-    QJsonObject fileStates;
-    for (auto it = mFileStates.constBegin(); it != mFileStates.constEnd(); ++it) {
-        fileStates.insert(helper.relativeFileName(it.key()),
-                          QJsonValue::fromVariant(it.value()));
-    }
-
-    jsonSession.insert(QLatin1String("fileStates"), fileStates);
-
-    file.device()->write(QJsonDocument(jsonSession).toJson());
-    if (!file.commit())
-        return false;
-
-    return true;
+    if (mSyncSettingsTimer.isActive())
+        sync();
 }
 
-Session Session::load(const QString &fileName)
+void Session::sync()
 {
-    Session session(fileName);
+    mSyncSettingsTimer.stop();
 
-    QFile file(fileName);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return session;
+    set("project",              relative(project));
+    set("recentFiles",          relative(recentFiles));
+    set("openFiles",            relative(openFiles));
+    set("expandedProjectPaths", relative(expandedProjectPaths));
+    set("activeFile",           relative(activeFile));
 
-    QJsonParseError error;
-    QByteArray json = file.readAll();
-    QJsonDocument document(QJsonDocument::fromJson(json, &error));
-    if (error.error != QJsonParseError::NoError)
-        return session;
+    QVariantMap states;
+    for (auto it = fileStates.constBegin(); it != fileStates.constEnd(); ++it)
+        states.insert(relative(it.key()), it.value());
+    set("fileStates", states);
+}
 
-    QJsonObject jsonSession = document.object();
-    JsonHelper helper(fileName);
+bool Session::save()
+{
+    sync();
+    settings->sync();
+    return settings->status() == QSettings::NoError;
+}
 
-    session.mProject = helper.resolveFileName(jsonSession.value(QLatin1String("project")));
-    session.mRecentFiles = helper.resolveFileNames(jsonSession.value(QLatin1String("recentFiles")).toArray());
-    session.mOpenFiles = helper.resolveFileNames(jsonSession.value(QLatin1String("openFiles")).toArray());
-    session.mExpandedProjectPaths = helper.resolveFileNames(jsonSession.value(QLatin1String("expandedProjectPaths")).toArray());
-    session.mActiveFile = helper.resolveFileName(jsonSession.value(QLatin1String("activeFile")));
+/**
+ * This function "moves" the current session to a new location. It happens for
+ * example when saving a project for the first time or saving it under a
+ * different file name.
+ */
+void Session::setFileName(const QString &fileName)
+{
+    // Make sure we have no pending changes to save to our old location
+    if (mSyncSettingsTimer.isActive())
+        sync();
 
-    QJsonObject fileStates = jsonSession.value(QLatin1String("fileStates")).toObject();
-    for (auto it = fileStates.constBegin(); it != fileStates.constEnd(); ++it) {
-        session.mFileStates.insert(helper.resolveFileName(it.key()),
-                                   it.value().toVariant());
-    }
+    auto newSettings = Utils::jsonSettings(fileName);
 
-    return session;
+    // Copy over all settings
+    const auto keys = settings->allKeys();
+    for (const auto &key : keys)
+        newSettings->setValue(key, settings->value(key));
+
+    settings = std::move(newSettings);
+
+    FileHelper::setFileName(fileName);
+
+    scheduleSync();
+}
+
+void Session::setProject(const QString &fileName)
+{
+    project = fileName;
+    scheduleSync();
 }
 
 void Session::addRecentFile(const QString &fileName)
@@ -152,10 +145,120 @@ void Session::addRecentFile(const QString &fileName)
     if (absoluteFilePath.isEmpty())
         return;
 
-    mRecentFiles.removeAll(absoluteFilePath);
-    mRecentFiles.prepend(absoluteFilePath);
-    while (mRecentFiles.size() > Preferences::MaxRecentFiles)
-        mRecentFiles.removeLast();
+    recentFiles.removeAll(absoluteFilePath);
+    recentFiles.prepend(absoluteFilePath);
+    while (recentFiles.size() > Preferences::MaxRecentFiles)
+        recentFiles.removeLast();
+
+    scheduleSync();
+}
+
+void Session::clearRecentFiles()
+{
+    recentFiles.clear();
+    scheduleSync();
+}
+
+void Session::setOpenFiles(const QStringList &fileNames)
+{
+    openFiles = fileNames;
+    scheduleSync();
+}
+
+void Session::setActiveFile(const QString &fileName)
+{
+    activeFile = fileName;
+    scheduleSync();
+}
+
+QVariantMap Session::fileState(const QString &fileName) const
+{
+    return fileStates.value(fileName);
+}
+
+void Session::setFileState(const QString &fileName, const QVariantMap &fileState)
+{
+    fileStates.insert(fileName, fileState);
+    scheduleSync();
+}
+
+void Session::setFileStateValue(const QString &fileName, const QString &name, const QVariant &value)
+{
+    auto &state = fileStates[fileName];
+    auto &v = state[name];
+    if (v != value) {
+        v = value;
+        scheduleSync();
+    }
+}
+
+static QString lastPathKey(Session::FileType fileType)
+{
+    QString key = QLatin1String("last.");
+
+    switch (fileType) {
+    case Session::ExportedFile:
+        key.append(QLatin1String("exportedFilePath"));
+        break;
+    case Session::ExternalTileset:
+        key.append(QLatin1String("externalTilesetPath"));
+        break;
+    case Session::ImageFile:
+        key.append(QLatin1String("imagePath"));
+        break;
+    case Session::ObjectTemplateFile:
+        key.append(QLatin1String("objectTemplatePath"));
+        break;
+    case Session::ObjectTypesFile:
+        key.append(QLatin1String("objectTypesPath"));
+        break;
+    case Session::WorldFile:
+        key.append(QLatin1String("worldFilePath"));
+        break;
+    }
+
+    return key;
+}
+
+/**
+ * Returns the starting location for a file chooser for the given file type.
+ */
+QString Session::lastPath(FileType fileType) const
+{
+    // First see if we can return the last used location for this file type
+    QString path = settings->value(lastPathKey(fileType)).toString();
+    if (!path.isEmpty())
+        return path;
+
+    // The location of the current document could be helpful
+    const DocumentManager *documentManager = DocumentManager::instance();
+    const Document *document = documentManager->currentDocument();
+    if (document) {
+        path = QFileInfo(document->fileName()).path();
+        if (!path.isEmpty())
+            return path;
+    }
+
+    // Try the location of the current project
+    if (!project.isEmpty()) {
+        path = QFileInfo(project).path();
+        if (!path.isEmpty())
+            return path;
+    }
+
+    // Finally, we just open the 'Documents' folder
+    return QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+}
+
+/**
+ * \see lastPath()
+ */
+void Session::setLastPath(FileType fileType, const QString &path)
+{
+    if (path.isEmpty())
+        return;
+
+    settings->setValue(lastPathKey(fileType), path);
 }
 
 QString Session::defaultFileName()
@@ -165,14 +268,164 @@ QString Session::defaultFileName()
 
 QString Session::defaultFileNameForProject(const QString &projectFile)
 {
+    if (projectFile.isEmpty())
+        return defaultFileName();
+
     const QFileInfo fileInfo(projectFile);
 
     QString sessionFile = fileInfo.path();
     sessionFile += QLatin1Char('/');
     sessionFile += fileInfo.completeBaseName();
-    sessionFile += QLatin1String(".tiled-session");
+    sessionFile += QStringLiteral(".tiled-session");
 
     return sessionFile;
+}
+
+Session &Session::initialize()
+{
+    Q_ASSERT(!mCurrent);
+    auto &session = switchCurrent(Preferences::instance()->startupSession());
+
+    // Workaround for users facing issue #2852, bringing their default session
+    // to the right location.
+    if (session.project.isEmpty()) {
+        if (QFileInfo(session.fileName()).fileName() == QLatin1String("default.tiled-session")) {
+            const QString defaultName = defaultFileName();
+            if (session.fileName() != defaultName) {
+                session.setFileName(defaultName);
+                Preferences::instance()->setLastSession(defaultName);
+            }
+        }
+    }
+
+    return session;
+}
+
+Session &Session::current()
+{
+    Q_ASSERT(mCurrent);
+    return *mCurrent;
+}
+
+static void migratePreferences();
+
+Session &Session::switchCurrent(const QString &fileName)
+{
+    const bool initialSession = !mCurrent;
+
+    // Do nothing if this session is already current
+    if (!initialSession && mCurrent->fileName() == fileName)
+        return *mCurrent;
+
+    mCurrent = std::make_unique<Session>(fileName);
+    Preferences::instance()->setLastSession(mCurrent->fileName());
+
+    if (initialSession)
+        migratePreferences();
+
+    // Call all registered callbacks because any value may have changed
+    for (const auto &callbacks : qAsConst(mChangedCallbacks))
+        for (const auto &callback : callbacks)
+            callback();
+
+    return *mCurrent;
+}
+
+void Session::deinitialize()
+{
+    mCurrent.reset();
+}
+
+template<typename T>
+static void migrateToSession(const char *preferencesKey, const char *sessionKey)
+{
+    auto &session = Session::current();
+    if (session.isSet(sessionKey))
+        return;
+
+    const auto value = Preferences::instance()->value(QLatin1String(preferencesKey));
+    if (!value.isValid())
+        return;
+
+    session.set(sessionKey, value.value<T>());
+}
+
+static void migratePreferences()
+{
+    // Migrate some preferences to the session for compatibility
+    migrateToSession<bool>("Automapping/WhileDrawing", "automapping.whileDrawing");
+
+    migrateToSession<QStringList>("LoadedWorlds", "loadedWorlds");
+    migrateToSession<QString>("Storage/StampsDirectory", "stampsFolder");
+
+    migrateToSession<int>("Map/Orientation", "map.orientation");
+    migrateToSession<int>("Storage/LayerDataFormat", "map.layerDataFormat");
+    migrateToSession<int>("Storage/MapRenderOrder", "map.renderOrder");
+    migrateToSession<bool>("Map/FixedSize", "map.fixedSize");
+    migrateToSession<int>("Map/Width", "map.width");
+    migrateToSession<int>("Map/Height", "map.height");
+    migrateToSession<int>("Map/TileWidth", "map.tileWidth");
+    migrateToSession<int>("Map/TileHeight", "map.tileHeight");
+
+    migrateToSession<int>("Tileset/Type", "tileset.type");
+    migrateToSession<bool>("Tileset/EmbedInMap", "tileset.embedInMap");
+    migrateToSession<bool>("Tileset/UseTransparentColor", "tileset.useTransparentColor");
+    migrateToSession<QColor>("Tileset/TransparentColor", "tileset.transparentColor");
+    migrateToSession<QSize>("Tileset/TileSize", "tileset.tileSize");
+    migrateToSession<int>("Tileset/Spacing", "tileset.spacing");
+    migrateToSession<int>("Tileset/Margin", "tileset.margin");
+
+    migrateToSession<QString>("AddPropertyDialog/PropertyType", "property.type");
+
+    migrateToSession<QStringList>("Console/History", "console.history");
+
+    migrateToSession<bool>("SaveAsImage/VisibleLayersOnly", "exportAsImage.visibleLayersOnly");
+    migrateToSession<bool>("SaveAsImage/CurrentScale", "exportAsImage.useCurrentScale");
+    migrateToSession<bool>("SaveAsImage/DrawGrid", "exportAsImage.drawTileGrid");
+    migrateToSession<bool>("SaveAsImage/IncludeBackgroundColor", "exportAsImage.includeBackgroundColor");
+
+    migrateToSession<bool>("ResizeMap/RemoveObjects", "resizeMap.removeObjects");
+
+    migrateToSession<int>("Animation/FrameDuration", "frame.defaultDuration");
+
+    migrateToSession<QString>("lastUsedExportFilter", "map.lastUsedExportFilter");
+    migrateToSession<QString>("lastUsedMapFormat", "map.lastUsedFormat");
+    migrateToSession<QString>("lastUsedOpenFilter", "file.lastUsedOpenFilter");
+    migrateToSession<QString>("lastUsedTilesetExportFilter", "tileset.lastUsedExportFilter");
+    migrateToSession<QString>("lastUsedTilesetFilter", "tileset.lastUsedFilter");
+    migrateToSession<QString>("lastUsedTilesetFormat", "tileset.lastUsedFormat");
+
+    auto &session = Session::current();
+    auto prefs = Preferences::instance();
+
+    // Migrate some preferences that need manual handling
+    if (session.fileName() == Session::defaultFileName()) {
+        if (prefs->contains(QLatin1String("recentFiles"))) {
+            session.recentFiles = prefs->get<QStringList>("recentFiles/fileNames");
+            session.setOpenFiles(prefs->get<QStringList>("recentFiles/lastOpenFiles"));
+            session.setActiveFile(prefs->get<QString>("recentFiles/lastActive"));
+        }
+
+        if (prefs->contains(QLatin1String("MapEditor/MapStates"))) {
+            const auto mapStates = prefs->get<QVariantMap>("MapEditor/MapStates");
+
+            for (auto it = mapStates.begin(); it != mapStates.end(); ++it) {
+                const QString &fileName = it.key();
+                auto mapState = it.value().toMap();
+
+                const QPointF viewCenter = mapState.value(QLatin1String("viewCenter")).toPointF();
+
+                mapState.insert(QLatin1String("viewCenter"), toSettingsValue(viewCenter));
+
+                session.setFileState(fileName, mapState);
+            }
+        }
+
+        if (session.save()) {
+            prefs->remove(QLatin1String("recentFiles"));
+            prefs->remove(QLatin1String("MapEditor/MapStates"));
+        }
+    }
 }
 
 } // namespace Tiled

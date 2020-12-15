@@ -20,8 +20,15 @@
 
 #pragma once
 
+#include "rangeset.h"
+
 #include <QIcon>
+#include <QSettings>
 #include <QString>
+
+#include <memory>
+
+#include "qtcompat_p.h"
 
 class QAction;
 class QKeyEvent;
@@ -37,6 +44,9 @@ QStringList cleanFilterList(const QString &filter);
 bool fileNameMatchesNameFilter(const QString &fileName,
                                const QString &nameFilter);
 QString firstExtension(const QString &nameFilter);
+
+int matchingScore(const QStringList &words, QStringRef string);
+RangeSet<int> matchingRanges(const QStringList &words, QStringRef string);
 
 /**
  * Looks up the icon with the specified \a name from the system theme and set
@@ -69,6 +79,7 @@ void setThemeIcon(T *t, const char *name)
 void restoreGeometry(QWidget *widget);
 void saveGeometry(QWidget *widget);
 
+int defaultDpi();
 qreal defaultDpiScale();
 int dpiScaled(int value);
 qreal dpiScaled(qreal value);
@@ -82,6 +93,11 @@ bool isZoomOutShortcut(QKeyEvent *event);
 bool isResetZoomShortcut(QKeyEvent *event);
 
 void addFileManagerActions(QMenu &menu, const QString &fileName);
+void addOpenContainingFolderAction(QMenu &menu, const QString &fileName);
+void addOpenWithSystemEditorAction(QMenu &menu, const QString &fileName);
+
+QSettings::Format jsonSettingsFormat();
+std::unique_ptr<QSettings> jsonSettings(const QString &fileName);
 
 } // namespace Utils
 } // namespace Tiled

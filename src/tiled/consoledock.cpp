@@ -22,8 +22,8 @@
 #include "consoledock.h"
 
 #include "logginginterface.h"
-#include "preferences.h"
 #include "scriptmanager.h"
+#include "session.h"
 #include "utils.h"
 
 #include <QCoreApplication>
@@ -31,11 +31,14 @@
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QSettings>
 #include <QShortcut>
 #include <QVBoxLayout>
 
 namespace Tiled {
+
+namespace session {
+static SessionOption<QStringList> commandHistory { "console.history" };
+} // namespace session
 
 class ConsoleOutputWidget : public QPlainTextEdit
 {
@@ -69,7 +72,7 @@ ConsoleDock::ConsoleDock(QWidget *parent)
 
     QWidget *widget = new QWidget(this);
     QVBoxLayout *layout = new QVBoxLayout(widget);
-    layout->setMargin(0);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
     mPlainTextEdit->setReadOnly(true);
@@ -89,12 +92,12 @@ ConsoleDock::ConsoleDock(QWidget *parent)
     auto nextShortcut = new QShortcut(Qt::Key_Down, mLineEdit, nullptr, nullptr, Qt::WidgetShortcut);
     connect(nextShortcut, &QShortcut::activated, [this] { moveHistory(1); });
 
-    auto clearButton = new QPushButton(tr("Clear Console"));
-    connect(clearButton, &QPushButton::clicked, mPlainTextEdit, &QPlainTextEdit::clear);
+    mClearButton = new QPushButton(tr("Clear Console"));
+    connect(mClearButton, &QPushButton::clicked, mPlainTextEdit, &QPlainTextEdit::clear);
 
     auto bottomBar = new QHBoxLayout;
     bottomBar->addWidget(mLineEdit);
-    bottomBar->addWidget(clearButton);
+    bottomBar->addWidget(mClearButton);
     bottomBar->setSpacing(Utils::dpiScaled(7));
 
     layout->addWidget(mPlainTextEdit);
@@ -107,8 +110,7 @@ ConsoleDock::ConsoleDock(QWidget *parent)
 
     setWidget(widget);
 
-    QSettings *settings = Preferences::instance()->settings();
-    mHistory = settings->value(QStringLiteral("Console/History")).toStringList();
+    mHistory = session::commandHistory;
     mHistoryPosition = mHistory.size();
 
     connect(this, &QDockWidget::visibilityChanged, this, [this](bool visible) {
@@ -174,9 +176,7 @@ void ConsoleDock::executeScript()
     mHistoryPosition = mHistory.size();
 
     // Remember the last few script lines
-    QSettings *settings = Preferences::instance()->settings();
-    settings->setValue(QStringLiteral("Console/History"),
-                       QStringList(mHistory.mid(mHistory.size() - 10)));
+    session::commandHistory = mHistory.mid(mHistory.size() - 10);
 }
 
 void ConsoleDock::moveHistory(int direction)
@@ -210,6 +210,7 @@ void ConsoleDock::retranslateUi()
 {
     setWindowTitle(tr("Console"));
     mLineEdit->setPlaceholderText(tr("Execute script"));
+    mClearButton->setText(tr("Clear Console"));
 }
 
 } // namespace Tiled

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "filesystemwatcher.h"
 #include "project.h"
 
 #include <QAbstractListModel>
@@ -50,7 +51,7 @@ class ProjectModel : public QAbstractItemModel
 
 public:
     explicit ProjectModel(QObject *parent = nullptr);
-    ~ProjectModel();
+    ~ProjectModel() override;
 
     void updateNameFilters();
 
@@ -61,8 +62,23 @@ public:
     void removeFolder(int row);
     void refreshFolders();
 
+    struct Match {
+        int score;
+        int offset;
+        QString path;
+
+#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
+        QStringRef relativePath() const { return path.midRef(offset); }
+#else
+        QStringView relativePath() const { return QStringView(path).mid(offset); }
+#endif
+    };
+
+    QVector<Match> findFiles(const QStringList &words) const;
+
     QString filePath(const QModelIndex &index) const;
 
+    QModelIndex index(const QString &filePath) const;
     QModelIndex index(int row, int column,
                       const QModelIndex &parent = QModelIndex()) const override;
     QModelIndex parent(const QModelIndex &index) const override;
@@ -77,14 +93,22 @@ public:
     QMimeData *mimeData(const QModelIndexList &indexes) const override;
 
 signals:
+    void folderAdded(const QString &folder);
+    void folderRemoved(const QString &folder);
+
     void nameFiltersChanged(const QStringList &nameFilters);
     void scanFolder(const QString &folder);
+
+    void aboutToRefresh();
+    void refreshed();
 
 private:
     FolderEntry *entryForIndex(const QModelIndex &index) const;
     QModelIndex indexForEntry(FolderEntry *entry) const;
 
     void pluginObjectAddedOrRemoved(QObject *object);
+
+    void pathsChanged(const QStringList &paths);
 
     void scheduleFolderScan(const QString &folder);
     void folderScanned(FolderEntry *entry);
@@ -99,6 +123,7 @@ private:
     QThread mScanningThread;
     QString mScanningFolder;
     QStringList mFoldersPendingScan;
+    FileSystemWatcher mWatcher;
 };
 
 

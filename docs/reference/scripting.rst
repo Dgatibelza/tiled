@@ -1,6 +1,6 @@
 .. raw:: html
 
-   <div class="new">New in Tiled 1.3</div>
+   <div class="new new-prev">Since Tiled 1.3</div>
 
 .. |ro| replace:: *[read‑only]*
 
@@ -115,6 +115,14 @@ and passing it into the ``disconnect`` function:
 
 API Reference
 -------------
+
+Global Variables
+^^^^^^^^^^^^^^^^
+
+__filename
+    The file path of the current file being evaluated. Only available during
+    initial evaluation of the file and not when later functions in that file
+    get called. If you need it there, copy the value to local scope.
 
 tiled module
 ^^^^^^^^^^^^
@@ -622,6 +630,57 @@ Functions
 FileFormat.supportsFile(fileName : string) : bool
     Returns whether the file is readable by this format.
 
+.. _script-fileinfo:
+
+FileInfo
+^^^^^^^^
+
+Offers various operations on file paths, such as turning absolute paths into relative ones, splitting a path into its components, and so on.
+
+Functions
+~~~~~~~~~
+
+FileInfo.baseName(filePath : string) : string
+    Returns the file name of ``filePath`` up to (but not including) the first '.' character.
+
+FileInfo.canonicalPath(filePath : string) : string
+    Returns a canonicalized ``filePath``, i.e. an absolute path without symbolic links or redundant "." or ".." elements. On Windows, drive substitutions are also resolved.
+
+    It is recommended to use ``canonicalPath`` in only those cases where canonical paths are really necessary. In most cases, ``cleanPath`` should be enough.
+
+FileInfo.cleanPath(filePath : string) : string
+    Returns ``filePath`` without redundant separators and with resolved occurrences of `.` and `..` components. For instance, ``/usr/local//../bin/`` becomes ``/usr/bin``.
+
+FileInfo.completeBaseName(filePath: string) : string
+    Returns the file name of ``filePath`` up to (but not including) the last '.' character.
+
+FileInfo.completeSuffix(filePath : string) : string
+    Returns the file suffix of ``filePath`` from (but not including) the last '.' character.
+
+FileInfo.fileName(filePath : string) : string
+    Returns the last component of ``filePath``, that is, everything after the last '/' character.
+
+FileInfo.fromNativeSeparators(filePath : string) : string
+    On Windows, returns ``filePath`` with all '\\\\' characters replaced by '/'. On other operating systems, it returns the input unmodified.
+
+FileInfo.isAbsolutePath(filePath : string) : boolean
+    Returns true if `filePath` is an absolute path and false if it is a relative one.
+
+FileInfo.joinPaths(...paths) : string
+    Concatenates the given paths using the '/' character.
+
+FileInfo.path(filePath : string) : string
+    Returns the part of ``filePath`` that is not the file name, that is, everything up to (but not including) the last '/' character. If ``filePath`` is just a file name, then '.' is returned. If ``filePath`` ends with a '/' character, then the file name is assumed to be empty for the purpose of the above definition.
+
+FileInfo.relativePath(dirPath : string, filePath : string) : string
+    Returns the path to ``filePath`` relative to the directory ``dirPath``. If necessary, '..' components are inserted.
+
+FileInfo.suffix(filePath : string) : string
+    Returns the file suffix of ``filePath`` from (but not including) the first '.' character.
+
+FileInfo.toNativeSeparators(filePath : string) : string
+    On Windows, returns ``filePath`` with all '/' characters replaced by '\\\\'. On other operating systems, it returns the input unmodified.
+
 .. _script-grouplayer:
 
 GroupLayer
@@ -659,9 +718,161 @@ GroupLayer.insertLayerAt(index : int, layer : :ref:`script-layer`) : void
     Inserts the layer at the given index. The layer can't already be part of
     a map.
 
+    When adding a :ref:`script-tilelayer` to a map, the layer's width and
+    height are automatically initialized to the size of the map (since Tiled 1.4.2).
+
 GroupLayer.addLayer(layer : :ref:`script-layer`) : void
     Adds the layer to the group, above all existing layers. The layer can't
     already be part of a map.
+
+    When adding a :ref:`script-tilelayer` to a map, the layer's width and
+    height are automatically initialized to the size of the map (since Tiled 1.4.2).
+
+.. raw:: html
+
+   <div class="new">New in Tiled 1.5</div>
+
+.. _script-image:
+
+Image
+^^^^^
+
+Can be used to create, load, save and modify images. Also useful when writing
+an importer, where the image can be set on a tileset or its tiles (see :ref:`Tileset.loadFromImage <script-tileset-loadFromImage>` and :ref:`Tile.setImage <script-tile-setImage>`).
+
+Properties
+~~~~~~~~~~
+
+.. csv-table::
+    :widths: 1, 2
+
+    **width** : int, Width of the image in pixels.
+    **height** : int, Height of the image in pixels.
+    **depth** : int, Number of bits used to store a single pixel.
+    **size** : :ref:`script-size`, Size of the image in pixels.
+    **format** : :ref:`Format <script-image-format>`, Format of the image.
+
+Functions
+~~~~~~~~~
+
+new Image()
+    Constructs an empty image.
+
+new Image(width : int, height : int, format : :ref:`Format <script-image-format>`)
+    Constructs an image of the given size using the given format.
+
+new Image(data : ArrayBuffer, width : int, height : int, format : :ref:`Format <script-image-format>`)
+    Constructs an image from the given data, interpreting it in the specified format and size.
+
+new Image(data : ArrayBuffer, width : int, height : int, bytesPerLine : int, format : :ref:`Format <script-image-format>`)
+    Constructs an image from the given data, interpreting it in the specified format and size.
+    The `bytesPerLine` argument specifies the stride and can be useful for referencing a sub-image.
+
+new Image(fileName : string [, format : string])
+    Construct an image by loading it from the given file name.
+    When no format is given it will be auto-detected (can be "bmp", "png", etc.).
+
+Image.pixel(x : int, y : int) : uint
+    Returns the 32-bit color value.
+
+Image.pixelColor(x : int, y : int) : color
+    Returns the color at the given position as string like "#rrggbb".
+
+Image.setPixel(x : int, y : int, index_or_rgb : uint) : void
+    Sets the color at the specified location to the given 32-bit color value or color table index.
+
+Image.setPixelColor(x : int, y : int, color : color) : void
+    Sets the color at the specified location to the given color by string (supports values like "#rrggbb").
+
+Image.fill(index_or_rgb : uint) : void
+    Fills the image with the given 32-bit color value or color table index.
+
+Image.fill(color : color) : void
+    Fills the image with the given color by string (supports values like "#rrggbb").
+
+Image.load(fileName : string [, format : string]) : void
+    Loads the image from the given file name.
+    When no format is given it will be auto-detected (can be "bmp", "png", etc.).
+
+Image.loadFromData(data : ArrayBuffer, format: string)
+    Loads the image from the given data interpreted with the given format (can be "bmp", png", etc.).
+
+Image.color(index : int) : uint
+    Returns the 32-bit color value at the given index in the color table.
+
+Image.colorTable() : array
+    Returns the color table as an array of 32-bit color values.
+
+Image.setColor(index : int, rgb : uint) : void
+    Sets the color at the given index in the color table to a given 32-bit color value.
+
+Image.setColor(index : int, color : color) : void
+    Sets the color at the given index in the color table to a color by string (supports values like "#rrggbb").
+
+Image.setColorTable(colors : array) : void
+    Sets the color table given by an array of either 32-bit color values or strings (supports values like "#rrggbb").
+
+Image.copy(x : int, y : int, width : int, height : int) : Image
+    Copies the given rectangle to a new image object.
+
+Image.scaled(width : int, height : int [, aspectRatioMode : :ref:`AspectRatioMode <script-image-aspectRatioMode>` [, transformationMode : :ref:`TransformationMode <script-image-transformationMode>`]]) : Image
+    Returns a scaled copy of this image. Default ``aspectRatioMode`` behavior is to ignore the aspect ratio. Default ``mode`` is a fast transformation.
+
+Image.mirrored(horizontal : bool, vertical : bool) : Image
+    Returns a mirrored copy of this image.
+
+.. _script-image-format:
+
+.. csv-table::
+    :header: "Image.Format"
+
+    Image.Format_Invalid
+    Image.Format_Mono
+    Image.Format_MonoLSB
+    Image.Format_Indexed8
+    Image.Format_RGB32
+    Image.Format_ARGB32
+    Image.Format_ARGB32_Premultiplied
+    Image.Format_RGB16
+    Image.Format_ARGB8565_Premultiplied
+    Image.Format_RGB666
+    Image.Format_ARGB6666_Premultiplied
+    Image.Format_RGB555
+    Image.Format_ARGB8555_Premultiplied
+    Image.Format_RGB888
+    Image.Format_RGB444
+    Image.Format_ARGB4444_Premultiplied
+    Image.Format_RGBX8888
+    Image.Format_RGBA8888
+    Image.Format_RGBA8888_Premultiplied
+    Image.Format_BGR30
+    Image.Format_A2BGR30_Premultiplied
+    Image.Format_RGB30
+    Image.Format_A2RGB30_Premultiplied
+    Image.Format_Alpha8
+    Image.Format_Grayscale8
+    Image.Format_RGBX64
+    Image.Format_RGBA64
+    Image.Format_RGBA64_Premultiplied
+    Image.Format_Grayscale16
+    Image.Format_BGR888
+
+.. _script-image-aspectRatioMode:
+
+.. csv-table::
+    :header: "Image.AspectRatioMode"
+
+    Image.IgnoreAspectRatio
+    Image.KeepAspectRatio
+    Image.KeepAspectRatioByExpanding
+
+.. _script-image-transformationMode:
+
+.. csv-table::
+    :header: "Image.TransformationMode"
+
+    Image.FastTransformation
+    Image.SmoothTransformation
 
 .. _script-imagelayer:
 
@@ -679,6 +890,17 @@ Properties
     **transparentColor** : color, Color used as transparent color when rendering the image.
     **imageSource** : url, Reference to the image rendered by this layer.
 
+Functions
+~~~~~~~~~
+
+.. _script-imagelayer-loadFromImage:
+
+ImageLayer.loadFromImage(image : :ref:`script-image` [, source: url]) : void
+    Sets the image for this layer to the given image, optionally also setting
+    the source of the image.
+
+    *Warning: This function has no undo!*
+
 .. _script-layer:
 
 Layer
@@ -692,15 +914,17 @@ Properties
 .. csv-table::
     :widths: 1, 2
 
+    **id** : int |ro|, Unique (map-wide) ID of the layer (since Tiled 1.5).
     **name** : string, Name of the layer.
     **opacity** : number, "Opacity of the layer, from 0 (fully transparent) to 1 (fully opaque)."
     **visible** : bool, Whether the layer is visible (affects child layer visibility for group layers).
     **locked** : bool, Whether the layer is locked (affects whether child layers are locked for group layers).
     **offset** : :ref:`script-point`, Offset in pixels that is applied when this layer is rendered.
-    **map** : :ref:`script-map`, Map that this layer is part of (or ``null`` in case of a standalone layer).
+    **parallaxFactor** : :ref:`script-point`, The parallax factor of the layer (since Tiled 1.5).
+    **map** : :ref:`script-map` |ro|, Map that this layer is part of (or ``null`` in case of a standalone layer).
     **selected** : bool, Whether the layer is selected.
     **isTileLayer** : bool |ro|, Whether this layer is a :ref:`script-tilelayer`.
-    **isObjectGroup** : bool |ro|, Whether this layer is an :ref:`script-objectgroup`.
+    **isObjectLayer** : bool |ro|, Whether this layer is an :ref:`script-objectgroup`.
     **isGroupLayer** : bool |ro|, Whether this layer is a :ref:`script-grouplayer`.
     **isImageLayer** : bool |ro|, Whether this layer is an :ref:`script-imagelayer`.
 
@@ -841,25 +1065,32 @@ Functions
 
 Object.property(name : string) : variant
     Returns the value of the custom property with the given name, or
-    ``undefined`` if no such property is set on the object.
+    ``undefined`` if no such property is set on the object. Does not include
+    inherited values (see :ref:`resolvedProperty <script-object-resolvedProperty>`).
 
-    *Note:* Currently it is not possible to inspect the value of ``file`` properties.
+    ``file`` properties are returned as :ref:`script-filepath`.
+
+    ``object`` properties are returned as :ref:`script-mapobject` when possible,
+    or :ref:`script-objectref` when the object could not be found.
 
 .. _script-object-setProperty:
 
 Object.setProperty(name : string, value : variant) : void
     Sets the value of the custom property with the given name. Supported types
-    are ``bool``, ``number`` and ``string``. When setting a ``number``, the
-    property type will be set to either ``int`` or ``float``, depending on
-    whether it is a whole number.
+    are ``bool``, ``number``, ``string``, :ref:`script-filepath`,
+    :ref:`script-objectref` and :ref:`script-mapobject`.
 
-    *Note:* Support for ``color`` and ``file`` properties is currently missing.
+    When setting a ``number``, the property type will be set to either ``int``
+    or ``float``, depending on whether it is a whole number.
+
+    *Note:* Support for setting ``color`` properties is currently missing.
 
 .. _script-object-properties:
 
 Object.properties() : object
     Returns all custom properties set on this object. Modifications to the
-    properties will not affect the original object.
+    properties will not affect the original object. Does not include inherited
+    values (see :ref:`resolvedProperties <script-object-resolvedProperties>`).
 
 .. _script-object-setProperties:
 
@@ -870,6 +1101,20 @@ Object.setProperties(properties : object) : void
 
 Object.removeProperty(name : string) : void
     Removes the custom property with the given name.
+
+.. _script-object-resolvedProperty:
+
+Object.resolvedProperty(name : string) : variant
+    Returns the value of the custom property with the given name, or
+    ``undefined`` if no such property is set. Includes values inherited from
+    object types, templates and tiles where applicable.
+
+.. _script-object-resolvedProperties:
+
+Object.resolvedProperties() : object
+    Returns all custom properties set on this object. Modifications to the
+    properties will not affect the original object. Includes values inherited from
+    object types, templates and tiles where applicable.
 
 .. _script-objectgroup:
 
@@ -959,24 +1204,6 @@ SelectedArea.intersect(rect : :ref:`script-rect`) : void
 SelectedArea.intersect(region : :ref:`script-region`) : void
     Sets the selected area to the intersection of the current selected area and the given region.
 
-.. _script-terrain:
-
-Terrain
-^^^^^^^
-
-Inherits :ref:`script-object`.
-
-Properties
-~~~~~~~~~~
-
-.. csv-table::
-    :widths: 1, 2
-
-    **id** : int |ro|, ID of this terrain.
-    **name** : string, Name of the terrain.
-    **imageTile** : :ref:`script-tile`, The tile representing the terrain (needs to be from the same tileset).
-    **tileset** : :ref:`script-tileset` |ro|, The tileset of the terrain.
-
 .. _script-tile:
 
 Tile
@@ -996,7 +1223,6 @@ Properties
     **size** : :ref:`script-size` |ro|, Size of the tile in pixels.
     **type** : string, Type of the tile.
     **imageFileName** : string, File name of the tile image (when the tile is part of an image collection tileset).
-    **terrain** : :ref:`script-tileterrains`, An object specifying the terrain at each corner of the tile.
     **probability** : number, Probability that the tile gets chosen relative to other tiles.
     **objectGroup** : :ref:`script-objectgroup`, The :ref:`script-objectgroup` associated with the tile in case collision shapes were defined. Returns ``null`` if no collision shapes were defined for this tile.
     **frames** : :ref:`[frame] <script-frames>`, This tile's animation as an array of frames.
@@ -1013,24 +1239,15 @@ Properties
     Tile.FlippedAntiDiagonally
     Tile.RotatedHexagonal120
 
-.. _script-tile-corner:
-
-.. csv-table::
-    :header: "Tile.Corner"
-
-    Tile.TopLeft
-    Tile.TopRight
-    Tile.BottomLeft
-    Tile.BottomRight
-
 Functions
 ~~~~~~~~~
 
-Tile.terrainAtCorner(corner : :ref:`Corner <script-tile-corner>`) : :ref:`script-terrain`
-    Returns the terrain used at the given corner.
+.. _script-tile-setImage:
 
-Tile.setTerrainAtCorner(corner : :ref:`Corner <script-tile-corner>`, :ref:`script-terrain`) : void
-    Sets the terrain used at the given corner.
+Tile.setImage(image : :ref:`script-image`) : void
+    Sets the image of this tile.
+
+    *Warning: This function has no undo and does not affect the saved tileset!*
 
 .. _script-tilecollisioneditor:
 
@@ -1156,7 +1373,7 @@ Properties
     **height** : int, Height of the map in tiles (only relevant for non-infinite maps).
     **size** : :ref:`script-size` |ro|, Size of the map in tiles (only relevant for non-infinite maps).
     **tileWidth** : int, Tile width (used by tile layers).
-    **tileHeight**: int, Tile height (used by tile layers).
+    **tileHeight** : int, Tile height (used by tile layers).
     **infinite** : bool, Whether this map is infinite.
     **hexSideLength** : int, Length of the side of a hexagonal tile (used by tile layers on hexagonal maps).
     **staggerAxis** : :ref:`StaggerAxis <script-map-staggeraxis>`, "For staggered and hexagonal maps, determines which axis (X or Y) is staggered."
@@ -1411,8 +1628,8 @@ Properties
 
     **name** : string, Name of the tileset.
     **image** : string, The file name of the image used by this tileset. Empty in case of image collection tilesets.
-    **tiles**: [:ref:`script-tile`] |ro|, Array of all tiles in this tileset. Note that the index of a tile in this array does not always match with its ID.
-    **terrains**: [:ref:`script-terrain`] |ro|, Array of all terrains in this tileset.
+    **tiles** : [:ref:`script-tile`] |ro|, Array of all tiles in this tileset. Note that the index of a tile in this array does not always match with its ID.
+    **wangSets** : [:ref:`script-wangset`] |ro|, Array of all Wang sets in this tileset.
     **tileCount** : int, The number of tiles in this tileset.
     **nextTileId** : int, The ID of the next tile that would be added to this tileset. All existing tiles have IDs that are lower than this ID.
     **tileWidth** : int, Tile width for tiles in this tileset in pixels.
@@ -1473,11 +1690,30 @@ Tileset.setTileSize(width : int, height : int) : void
     Sets the tile size for this tileset. If an image has been specified as well,
     the tileset will be (re)loaded. Can't be used on image collection tilesets.
 
+.. _script-tileset-loadFromImage:
+
+Tileset.loadFromImage(image : :ref:`script-image` [, source: string]) : void
+    Creates the tiles in this tileset by cutting them out of the given image,
+    using the current tile size, tile spacing and margin parameters. These
+    values should be set before calling this function.
+
+    Optionally sets the source file of the image. This may be useful, but be
+    careful since Tiled will try to reload the tileset from that source when
+    the tileset parameters are changed.
+
+    *Warning: This function has no undo!*
+
 Tileset.addTile() : :ref:`script-tile`
     Adds a new tile to this tileset and returns it. Only works for image collection tilesets.
 
 Tileset.removeTiles(tiles : [:ref:`script-tile`]) : void
     Removes the given tiles from this tileset. Only works for image collection tilesets.
+
+Tileset.addWangSet(name : string, type : int) : :ref:`script-wangset`
+    Add a new Wang set to this tileset with the given name and type.
+
+Tileset.removeWangSet(wangSet : :ref:`script-wangset`) : void
+    Removes the given Wang set from this tileset.
 
 .. _script-tileseteditor:
 
@@ -1526,6 +1762,56 @@ Properties
 
     **currentTileset** : :ref:`script-tileset`, "Access or change the currently displayed tileset."
     **selectedTiles** : [:ref:`script-tile`], "A list of the tiles that are selected in the current tileset."
+
+.. raw:: html
+
+   <div class="new">New in Tiled 1.5</div>
+
+.. _script-wangset:
+
+WangSet
+^^^^^^^
+
+Inherits :ref:`script-object`.
+
+Properties
+~~~~~~~~~~
+
+.. csv-table::
+    :widths: 1, 2
+
+    **name** : string, "Name of the Wang set."
+    **type** : :ref:`Type <script-wangset-type>`, "Type of the Wang set."
+    **imageTile** : :ref:`script-tile`, "The tile used to represent the Wang set."
+    **colorCount** : int, "The number of colors used by this Wang set."
+    **tileset** : :ref:`script-tileset` |ro|, "The tileset to which this Wang set belongs."
+
+.. _script-wangset-type:
+
+.. csv-table::
+    :header: "WangSet.Type"
+
+    WangSet.Edge, "The Wang set only uses edges"
+    WangSet.Corner, "The Wang set only uses corners"
+    WangSet.Mixed, "The Wang set uses both corners and edges"
+
+Functions
+~~~~~~~~~
+
+WangSet.wangId(tile : :ref:`script-tile`) : int[8]
+    Returns the current Wang ID associated with the given tile. The Wang ID is
+    given by an array of 8 numbers, indicating the colors associated with each
+    index in the following order:
+    [Top, TopRight, Right, BottomRight, Bottom, BottomLeft, Left, TopLeft].
+
+    A value of 0 indicates that no color is associated with a given index.
+
+WangSet.setWangId(tile : :ref:`script-tile`, wangId : int[8]) : void
+    Sets the Wang ID associated with the given tile.
+
+    Make sure the Wang set color count is set before calling this function,
+    because it will raise an error when the Wang ID refers to non-existing
+    colors.
 
 .. _script-basic-types:
 
@@ -1699,20 +1985,6 @@ size
 
     **width** : number, Width.
     **height** : number, Height.
-
-.. _script-tileterrains:
-
-Terrains
-~~~~~~~~
-
-An object specifying the terrain for each corner of a tile:
-
-.. csv-table::
-
-    **topLeft** : :ref:`script-terrain`
-    **topRight** : :ref:`script-terrain`
-    **bottomLeft** : :ref:`script-terrain`
-    **bottomRight** : :ref:`script-terrain`
 
 .. _script-textfile:
 

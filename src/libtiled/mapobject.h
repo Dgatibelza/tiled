@@ -74,8 +74,6 @@ struct TILEDSHARED_EXPORT TextData
  */
 class TILEDSHARED_EXPORT MapObject : public Object
 {
-    Q_OBJECT
-
 public:
     /**
      * Enumerates the different object shapes. Rectangle is the default shape.
@@ -522,3 +520,4 @@ inline void MapObject::markAsTemplateBase()
 
 Q_DECLARE_METATYPE(Tiled::MapObject::Shape)
 Q_DECLARE_METATYPE(Tiled::MapObject*)
+Q_DECLARE_OPERATORS_FOR_FLAGS(Tiled::MapObject::ChangedProperties);

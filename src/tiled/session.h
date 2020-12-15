@@ -20,124 +20,251 @@
 
 #pragma once
 
+#include <QDir>
+#include <QHash>
+#include <QPointF>
+#include <QSettings>
+#include <QSize>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantMap>
+
+#include <list>
+#include <memory>
 
 namespace Tiled {
 
-class Session
+class FileHelper
 {
 public:
-    explicit Session(const QString &fileName = QString());
+    FileHelper(const QString &fileName);
+
+    void setFileName(const QString &fileName);
+
+    QString relative(const QString &fileName) const;
+    QStringList relative(const QStringList &fileNames) const;
+
+    QString resolve(const QString &fileName) const;
+    QStringList resolve(const QStringList &fileNames) const;
+
+protected:
+    QDir mDir;
+};
+
+inline QString FileHelper::relative(const QString &fileName) const
+{
+    if (fileName.startsWith(mDir.path()))
+        return mDir.relativeFilePath(fileName);
+    return fileName;
+}
+
+inline QString FileHelper::resolve(const QString &fileName) const
+{
+    if (fileName.isEmpty())
+        return QString();
+    return QDir::cleanPath(mDir.filePath(fileName));
+}
+
+
+template<typename T>
+T fromSettingsValue(const QVariant &value)
+{
+    return value.value<T>();
+}
+
+template<typename T>
+QVariant toSettingsValue(const T &value)
+{
+    return QVariant::fromValue(value);
+}
+
+template<>
+inline QSize fromSettingsValue<QSize>(const QVariant &value)
+{
+    const auto map = value.toMap();
+    return QSize(map.value(QLatin1String("width")).toInt(),
+                 map.value(QLatin1String("height")).toInt());
+}
+
+template<>
+inline QVariant toSettingsValue<QSize>(const QSize &size)
+{
+    return QVariantMap {
+        { QLatin1String("width"), size.width() },
+        { QLatin1String("height"), size.height() }
+    };
+}
+
+template<>
+inline QPointF fromSettingsValue<QPointF>(const QVariant &value)
+{
+    const auto map = value.toMap();
+    return QPointF(map.value(QLatin1String("x")).toReal(),
+                   map.value(QLatin1String("y")).toReal());
+}
+
+template<>
+inline QVariant toSettingsValue<QPointF>(const QPointF &point)
+{
+    return QVariantMap {
+        { QLatin1String("x"), point.x() },
+        { QLatin1String("y"), point.y() }
+    };
+}
+
+
+class Session : protected FileHelper
+{
+    std::unique_ptr<QSettings> settings;
+
+public:
+    explicit Session(const QString &fileName);
+    ~Session();
+
+    bool save();
 
     QString fileName() const;
     void setFileName(const QString &fileName);
 
-    bool save() const;
-    static Session load(const QString &fileName);
-
-    QString project() const;
     void setProject(const QString &fileName);
 
-    QStringList recentFiles() const;
-    void setRecentFiles(const QStringList &recentFiles);
     void addRecentFile(const QString &fileName);
+    void clearRecentFiles();
 
-    QStringList openFiles() const;
-    void setOpenFiles(const QStringList &openFiles);
-
-    QStringList expandedProjectPaths() const;
-    void setExpandedProjectPaths(const QStringList &paths);
-
-    const QString &activeFile() const;
+    void setOpenFiles(const QStringList &fileNames);
     void setActiveFile(const QString &fileName);
 
     QVariantMap fileState(const QString &fileName) const;
     void setFileState(const QString &fileName, const QVariantMap &fileState);
+    void setFileStateValue(const QString &fileName, const QString &name, const QVariant &value);
+
+    enum FileType {
+        ExportedFile,
+        ExternalTileset,
+        ImageFile,
+        ObjectTemplateFile,
+        ObjectTypesFile,
+        WorldFile,
+    };
+
+    QString lastPath(FileType fileType) const;
+    void setLastPath(FileType fileType, const QString &path);
+
+    template <typename T>
+    T get(const char *key, const T &defaultValue = T()) const
+    {
+        return fromSettingsValue<T>(settings->value(QLatin1String(key),
+                                                    toSettingsValue(defaultValue)));
+    }
+
+    template <typename T>
+    void set(const char *key, const T &value) const
+    {
+        const auto settingsValue = toSettingsValue(value);
+        if (settings->value(QLatin1String(key)) == settingsValue)
+            return;
+
+        settings->setValue(QLatin1String(key), settingsValue);
+
+        const auto it = Session::mChangedCallbacks.constFind(key);
+        if (it != Session::mChangedCallbacks.constEnd())
+            for (const auto &cb : it.value())
+                cb();
+    }
+
+    bool isSet(const char *key) const
+    {
+        return settings->contains(QLatin1String(key));
+    }
 
     static QString defaultFileName();
     static QString defaultFileNameForProject(const QString &projectFile);
 
+    static Session &initialize();
+    static Session &current();
+    static Session &switchCurrent(const QString &fileName);
+    static void deinitialize();
+
+    QString project;
+    QStringList recentFiles;
+    QStringList openFiles;
+    QStringList expandedProjectPaths;
+    QString activeFile;
+    QMap<QString, QVariantMap> fileStates;
+
+    using ChangedCallback = std::function<void()>;
+    using Callbacks = std::list<ChangedCallback>;
+    using CallbackIterator = Callbacks::iterator;
+
 private:
-    QString mFileName;
+    template<typename T> friend class SessionOption;
 
-    QString mProject;
-    QStringList mRecentFiles;
-    QStringList mOpenFiles;
-    QStringList mExpandedProjectPaths;
-    QString mActiveFile;
-    QVariantMap mFileStates;
+    void scheduleSync() { mSyncSettingsTimer.start(); }
+    void sync();
+
+    QTimer mSyncSettingsTimer;
+
+    static std::unique_ptr<Session> mCurrent;
+    static QHash<const char*, Callbacks> mChangedCallbacks;
 };
-
 
 inline QString Session::fileName() const
 {
-    return mFileName;
+    return settings->fileName();
 }
 
-inline void Session::setFileName(const QString &fileName)
+
+template<typename T>
+class SessionOption
 {
-    mFileName = fileName;
+public:
+    SessionOption(const char * const key, T defaultValue = T())
+        : mKey(key)
+        , mDefault(defaultValue)
+    {}
+
+    T get() const;
+    void set(const T &value);
+
+    operator T() const { return get(); }
+    SessionOption &operator =(const T &value) { set(value); return *this; }
+
+    Session::CallbackIterator onChange(const Session::ChangedCallback &callback);
+    void unregister(Session::CallbackIterator it);
+
+private:
+    const char * const mKey;
+    const T mDefault;
+};
+
+template<typename T>
+T SessionOption<T>::get() const
+{
+    return Session::current().get<T>(mKey, mDefault);
 }
 
-inline QString Session::project() const
+template<typename T>
+void SessionOption<T>::set(const T &value)
 {
-    return mProject;
+    if (get() == value)
+        return;
+
+    Session::current().set(mKey, value);
 }
 
-inline void Session::setProject(const QString &fileName)
+template<typename T>
+Session::CallbackIterator SessionOption<T>::onChange(const Session::ChangedCallback &callback)
 {
-    mProject = fileName;
+    Session::Callbacks &callbacks = Session::mChangedCallbacks[mKey];
+    callbacks.push_front(callback);
+    return callbacks.begin();
 }
 
-inline QStringList Session::recentFiles() const
+template<typename T>
+void SessionOption<T>::unregister(Session::CallbackIterator it)
 {
-    return mRecentFiles;
-}
-
-inline QStringList Session::openFiles() const
-{
-    return mOpenFiles;
-}
-
-inline void Session::setRecentFiles(const QStringList &recentFiles)
-{
-    mRecentFiles = recentFiles;
-}
-
-inline void Session::setOpenFiles(const QStringList &openFiles)
-{
-    mOpenFiles = openFiles;
-}
-
-inline QStringList Session::expandedProjectPaths() const
-{
-    return mExpandedProjectPaths;
-}
-
-inline void Session::setExpandedProjectPaths(const QStringList &paths)
-{
-    mExpandedProjectPaths = paths;
-}
-
-inline const QString &Session::activeFile() const
-{
-    return mActiveFile;
-}
-
-inline void Session::setActiveFile(const QString &fileName)
-{
-    mActiveFile = fileName;
-}
-
-inline QVariantMap Session::fileState(const QString &fileName) const
-{
-    return mFileStates.value(fileName).toMap();
-}
-
-inline void Session::setFileState(const QString &fileName, const QVariantMap &fileState)
-{
-    mFileStates.insert(fileName, fileState);
+    Session::Callbacks &callbacks = Session::mChangedCallbacks[mKey];
+    callbacks.erase(it);
 }
 
 } // namespace Tiled

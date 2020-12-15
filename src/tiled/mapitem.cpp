@@ -18,6 +18,7 @@
  * this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "abstractworldtool.h"
 #include "mapitem.h"
 
 #include "documentmanager.h"
@@ -28,6 +29,7 @@
 #include "mapobject.h"
 #include "mapobjectitem.h"
 #include "maprenderer.h"
+#include "mapscene.h"
 #include "mapview.h"
 #include "objectgroupitem.h"
 #include "objectselectionitem.h"
@@ -79,12 +81,14 @@ public:
                 this, [this] (const ChangeEvent &change) {
             if (change.type == ChangeEvent::LayerChanged) {
                 auto &layerChange = static_cast<const LayerChangeEvent&>(change);
-                if (layerChange.properties & LayerChangeEvent::OffsetProperty)
+                if (layerChange.properties & LayerChangeEvent::PositionProperties)
                     if (Layer *currentLayer = mMapDocument->currentLayer())
                         if (currentLayer->isParentOrSelf(layerChange.layer))
-                            update();
+                            updateOffset();
             }
         });
+        connect(mapDocument, &MapDocument::currentLayerChanged,
+                this, &TileGridItem::updateOffset);
 
         setVisible(prefs->showGrid());
     }
@@ -97,22 +101,29 @@ public:
 
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *) override
     {
-        QPointF offset;
-
         // Take into account the offset of the current layer
-        if (Layer *layer = mMapDocument->currentLayer()) {
-            offset = layer->totalOffset();
-            painter->translate(offset);
-        }
+        painter->translate(mOffset);
 
         Preferences *prefs = Preferences::instance();
         mMapDocument->renderer()->drawGrid(painter,
-                                           option->exposedRect.translated(-offset),
+                                           option->exposedRect.translated(-mOffset),
                                            prefs->gridColor());
+    }
+
+    void updateOffset()
+    {
+        if (Layer *currentLayer = mMapDocument->currentLayer()) {
+            QPointF offset = static_cast<MapScene*>(scene())->absolutePositionForLayer(*currentLayer);
+            if (mOffset != offset) {
+                mOffset = offset;
+                update();
+            }
+        }
     }
 
 private:
     MapDocument *mMapDocument;
+    QPointF mOffset;
 };
 
 MapItem::MapItem(const MapDocumentPtr &mapDocument, DisplayMode displayMode,
@@ -247,6 +258,22 @@ void MapItem::setShowTileCollisionShapes(bool enabled)
             item->update();
 }
 
+void MapItem::updateLayerPositions()
+{
+    const MapScene *mapScene = static_cast<MapScene*>(scene());
+
+    for (LayerItem *item : qAsConst(mLayerItems)) {
+        const Layer &layer = *item->layer();
+        item->setPos(layer.offset() + mapScene->parallaxOffset(layer));
+    }
+
+    if (mDisplayMode == Editable) {
+        mTileSelectionItem->updatePosition();
+        mTileGridItem->updateOffset();
+        mObjectSelectionItem->updateItemPositions();
+    }
+}
+
 QRectF MapItem::boundingRect() const
 {
     return mBoundingRect;
@@ -274,8 +301,23 @@ void MapItem::hoverLeaveEvent(QGraphicsSceneHoverEvent *)
     }
 }
 
+bool MapItem::isWorldToolSelected() const
+{
+    Editor *currentEditor = DocumentManager::instance()->currentEditor();
+    if (auto currentMapEditor = qobject_cast<MapEditor*>(currentEditor)) {
+        if (qobject_cast<AbstractWorldTool*>(currentMapEditor->selectedTool()))
+            return true;
+    }
+    return false;
+}
+
 void MapItem::mousePressEvent(QGraphicsSceneMouseEvent *event)
 {
+    if (isWorldToolSelected()) {
+        // the world tool has it's own handling for hovered maps
+        QGraphicsItem::mousePressEvent(event);
+        return;
+    }
     if (mDisplayMode != ReadOnly || event->button() != Qt::LeftButton || !mIsHovered)
         QGraphicsItem::mousePressEvent(event);
 }
@@ -290,50 +332,9 @@ void MapItem::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
         MapView *view = static_cast<MapView*>(event->widget()->parent());
         QRectF viewRect { view->viewport()->rect() };
         QRectF sceneViewRect = view->viewportTransform().inverted().mapRect(viewRect);
-
-        // Try selecting similar layers and tileset by name to the previously active mapitem
-        Document *currentDocument = DocumentManager::instance()->currentDocument();
-        SharedTileset newSimilarTileset;
-
-        if (auto currentMapDocument = qobject_cast<MapDocument*>(currentDocument)) {
-            const Layer *currentLayer = currentMapDocument->currentLayer();
-            const QList<Layer*> selectedLayers = currentMapDocument->selectedLayers();
-
-            if (currentLayer) {
-                Layer *newCurrentLayer = mapDocument()->map()->findLayer(currentLayer->name(),
-                                                                         currentLayer->layerType());
-                if (newCurrentLayer)
-                    mapDocument()->setCurrentLayer(newCurrentLayer);
-            }
-
-            QList<Layer*> newSelectedLayers;
-            for (Layer *selectedLayer : selectedLayers) {
-                Layer *newSelectedLayer = mapDocument()->map()->findLayer(selectedLayer->name(),
-                                                                          selectedLayer->layerType());
-                if (newSelectedLayer)
-                    newSelectedLayers << newSelectedLayer;
-            }
-            if (!newSelectedLayers.isEmpty())
-                mapDocument()->setSelectedLayers(newSelectedLayers);
-
-            Editor *currentEditor = DocumentManager::instance()->currentEditor();
-            if (auto currentMapEditor = qobject_cast<MapEditor*>(currentEditor)) {
-                if (SharedTileset currentTileset = currentMapEditor->currentTileset()) {
-                    if (!mapDocument()->map()->tilesets().contains(currentTileset))
-                        newSimilarTileset = currentTileset->findSimilarTileset(mapDocument()->map()->tilesets());
-                }
-            }
-        }
-
-        DocumentManager::instance()->switchToDocument(mMapDocument.data(),
-                                                      sceneViewRect.center() - pos(),
-                                                      view->zoomable()->scale());
-
-        Editor *newEditor = DocumentManager::instance()->currentEditor();
-        if (auto newMapEditor = qobject_cast<MapEditor*>(newEditor))
-            if (newSimilarTileset)
-                newMapEditor->setCurrentTileset(newSimilarTileset);
-
+        DocumentManager::instance()->switchToDocumentAndHandleSimiliarTileset(mMapDocument.data(),
+                                                                              sceneViewRect.center() - pos(),
+                                                                              view->zoomable()->scale());
         return;
     }
 
@@ -368,9 +369,11 @@ void MapItem::documentChanged(const ChangeEvent &change)
     case ChangeEvent::LayerChanged:
         layerChanged(static_cast<const LayerChangeEvent&>(change));
         break;
-    case ChangeEvent::MapObjectsAboutToBeRemoved:
-        deleteObjectItems(static_cast<const MapObjectsEvent&>(change).mapObjects);
+    case ChangeEvent::MapObjectAboutToBeRemoved: {
+        auto &e = static_cast<const MapObjectEvent&>(change);
+        deleteObjectItem(e.objectGroup->objectAt(e.index));
         break;
+    }
     case ChangeEvent::MapObjectsChanged:
         syncObjectItems(static_cast<const MapObjectsChangeEvent&>(change).mapObjects);
         break;
@@ -439,8 +442,8 @@ void MapItem::layerRemoved(Layer *layer)
 }
 
 /**
- * A layer has changed. This can mean that the layer visibility, opacity or
- * offset changed.
+ * A layer has changed. This can mean that the layer visibility, opacity,
+ * offset or parallax factor changed.
  */
 void MapItem::layerChanged(const LayerChangeEvent &change)
 {
@@ -475,8 +478,10 @@ void MapItem::layerChanged(const LayerChangeEvent &change)
             multiplier = opacityFactor;
     }
 
+    const QPointF parallaxOffset = static_cast<MapScene*>(scene())->parallaxOffset(*layer);
+
     layerItem->setOpacity(layer->opacity() * multiplier);
-    layerItem->setPos(layer->offset());
+    layerItem->setPos(layer->offset() + parallaxOffset);
 
     updateBoundingRect();   // possible layer offset change
 }
@@ -588,15 +593,11 @@ void MapItem::objectsInserted(ObjectGroup *objectGroup, int first, int last)
 /**
  * Removes the map object items related to the given objects.
  */
-void MapItem::deleteObjectItems(const QList<MapObject*> &objects)
+void MapItem::deleteObjectItem(MapObject *object)
 {
-    for (MapObject *o : objects) {
-        auto i = mObjectItems.find(o);
-        Q_ASSERT(i != mObjectItems.end());
-
-        delete i.value();
-        mObjectItems.erase(i);
-    }
+    auto item = mObjectItems.take(object);
+    Q_ASSERT(item);
+    delete item;
 }
 
 /**

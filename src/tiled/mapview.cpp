@@ -81,6 +81,11 @@ MapView::MapView(QWidget *parent, Mode mode)
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
 
+    connect(horizontalScrollBar(), &QAbstractSlider::valueChanged, this, &MapView::updateViewRect);
+    connect(horizontalScrollBar(), &QAbstractSlider::rangeChanged, this, &MapView::updateViewRect);
+    connect(verticalScrollBar(), &QAbstractSlider::valueChanged, this, &MapView::updateViewRect);
+    connect(verticalScrollBar(), &QAbstractSlider::rangeChanged, this, &MapView::updateViewRect);
+
     connect(mZoomable, &Zoomable::scaleChanged, this, &MapView::adjustScale);
 }
 
@@ -122,7 +127,11 @@ void MapView::setScale(qreal scale)
 
 void MapView::fitMapInView()
 {
-    const QRectF rect = mapScene()->mapBoundingRect();
+    MapScene* scene = mapScene();
+    if (!scene)
+        return;
+
+    const QRectF rect = scene->mapBoundingRect();
     if (rect.isEmpty())
         return;
 
@@ -158,6 +167,8 @@ void MapView::adjustScale(qreal scale)
 
     setRenderHint(QPainter::SmoothPixmapTransform,
                   mZoomable->smoothTransform());
+
+    updateViewRect();
 }
 
 void MapView::setUseOpenGL(bool useOpenGL)
@@ -207,14 +218,26 @@ void MapView::updateSceneRect(const QRectF &sceneRect, const QTransform &transfo
     setSceneRect(expandedSceneRect);
 }
 
+void MapView::updateViewRect()
+{
+    const QRectF viewRect = mapToScene(viewport()->geometry()).boundingRect();
+    if (mViewRect == viewRect)
+        return;
+
+    mViewRect = viewRect;
+
+    if (MapScene *scene = mapScene())
+        scene->setViewRect(viewRect);
+
+    emit viewRectChanged();
+}
+
 void MapView::focusMapObject(MapObject *mapObject)
 {
     // FIXME: This is not always the visual center
     const QPointF center = mapObject->bounds().center();
-    const QPointF offset = mapObject->objectGroup()->totalOffset();
-    const QPointF focus = center + offset;
-
-    centerOn(mMapDocument->renderer()->pixelToScreenCoords(focus));
+    const QPointF screenCoords = mMapDocument->renderer()->pixelToScreenCoords(center);
+    forceCenterOn(screenCoords, *mapObject->objectGroup());
 }
 
 void MapView::setMapDocument(MapDocument *mapDocument)
@@ -257,8 +280,16 @@ void MapView::setHandScrolling(bool handScrolling)
  *
  * This code is based on QGraphicsView::centerOn.
  */
-void MapView::forceCenterOn(const QPointF &pos)
+void MapView::forceCenterOn(QPointF pos)
 {
+    // Let's wait until the initial paint event before we position the view,
+    // otherwise layout changes may still affect the position.
+    if (!mViewInitialized) {
+        mInitialCenterPos = pos;
+        mHasInitialCenterPos = true;
+        return;
+    }
+
     // This is only to make it update QGraphicsViewPrivate::lastCenterPoint,
     // just in case this is important.
     QGraphicsView::centerOn(pos);
@@ -285,6 +316,27 @@ void MapView::forceCenterOn(const QPointF &pos)
     }
     if (vScroll)
         vBar->forceSetValue(int(viewPoint.y() - height / 2.0));
+}
+
+/**
+ * Centers the view on the given \a position on the given \a layer, taking into
+ * account that the layer may have an offset and a parallax factor.
+ *
+ * \sa forceCenterOn(QPointF)
+ */
+void MapView::forceCenterOn(QPointF position, const Layer &layer)
+{
+    position += layer.totalOffset();
+
+    if (Preferences::instance()->parallaxEnabled()) {
+        const QPointF parallaxFactor = layer.effectiveParallaxFactor();
+        if (!qFuzzyIsNull(parallaxFactor.x()))
+            position.rx() /= parallaxFactor.x();
+        if (!qFuzzyIsNull(parallaxFactor.y()))
+            position.ry() /= parallaxFactor.y();
+    }
+
+    forceCenterOn(position);
 }
 
 bool MapView::event(QEvent *e)
@@ -315,14 +367,18 @@ bool MapView::event(QEvent *e)
     return QGraphicsView::event(e);
 }
 
-void MapView::showEvent(QShowEvent *event)
+void MapView::paintEvent(QPaintEvent *event)
 {
     if (!mViewInitialized) {
-        fitMapInView();
         mViewInitialized = true;
+
+        if (mHasInitialCenterPos)
+            forceCenterOn(mInitialCenterPos);
+        else
+            fitMapInView();
     }
 
-    QGraphicsView::showEvent(event);
+    QGraphicsView::paintEvent(event);
 }
 
 void MapView::hideEvent(QHideEvent *event)
@@ -368,11 +424,11 @@ void MapView::wheelEvent(QWheelEvent *event)
     bool wheelZoomsByDefault = Preferences::instance()->wheelZoomsByDefault();
     bool control = event->modifiers() & Qt::ControlModifier;
 
-    if ((wheelZoomsByDefault != control) && event->orientation() == Qt::Vertical) {
+    if ((wheelZoomsByDefault != control) && event->angleDelta().y()) {
         // No automatic anchoring since we'll do it manually
         setTransformationAnchor(QGraphicsView::NoAnchor);
 
-        mZoomable->handleWheelDelta(event->delta());
+        mZoomable->handleWheelDelta(event->angleDelta().y());
         adjustCenterFromMousePosition(mLastMousePos);
 
         // Restore the centering anchor
@@ -414,7 +470,7 @@ void MapView::wheelEvent(QWheelEvent *event)
  */
 void MapView::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MidButton && isActiveWindow()) {
+    if (event->button() == Qt::MiddleButton && isActiveWindow()) {
         setHandScrolling(true);
         return;
     }
@@ -427,7 +483,7 @@ void MapView::mousePressEvent(QMouseEvent *event)
  */
 void MapView::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MidButton) {
+    if (event->button() == Qt::MiddleButton) {
         setHandScrolling(false);
         return;
     }

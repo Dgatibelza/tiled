@@ -27,11 +27,12 @@
 #include "document.h"
 #include "preferences.h"
 #include "preferencesdialog.h"
+#include "project.h"
+#include "session.h"
 
 #include <QMainWindow>
 #include <QPointer>
 #include <QSessionManager>
-#include <QSettings>
 
 class QComboBox;
 class QLabel;
@@ -51,6 +52,7 @@ class ConsoleDock;
 class DocumentManager;
 class Editor;
 class IssuesDock;
+class LocatorWidget;
 class MapDocument;
 class MapDocumentActionHandler;
 class MapEditor;
@@ -58,6 +60,7 @@ class MapScene;
 class MapView;
 class ObjectTypesEditor;
 class ProjectDock;
+class ProjectModel;
 class TilesetDocument;
 class TilesetEditor;
 class Zoomable;
@@ -73,7 +76,7 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr, Qt::WindowFlags flags = 0);
+    MainWindow(QWidget *parent = nullptr, Qt::WindowFlags flags = {});
     ~MainWindow() override;
 
     void commitData(QSessionManager &manager);
@@ -90,6 +93,8 @@ public:
      * @return whether the file was successfully opened
      */
     bool openFile(const QString &fileName, FileFormat *fileFormat = nullptr);
+
+    bool addRecentProjectsActions(QMenu *menu) const;
 
     static MainWindow *instance();
 
@@ -108,6 +113,7 @@ protected:
 private:
     void newMap();
     void openFileDialog();
+    void openFileInProject();
     bool saveFile();
     bool saveFileAs();
     void saveAll();
@@ -123,7 +129,9 @@ private:
     void openProjectFile(const QString &fileName);
     void saveProjectAs();
     void closeProject();
+    void switchProject(Project project);
     void restoreSession();
+    void projectProperties();
 
     void cut();
     void copy();
@@ -196,6 +204,8 @@ private:
       */
     bool confirmAllSave();
 
+    bool confirmSaveWorld(const QString &fileName);
+
     void writeSettings();
     void readSettings();
 
@@ -216,7 +226,7 @@ private:
     ProjectDock *mProjectDock;
     IssuesDock *mIssuesDock;
     ObjectTypesEditor *mObjectTypesEditor;
-    QSettings mSettings;
+    QPointer<LocatorWidget> mLocatorWidget;
 
     QAction *mRecentFiles[Preferences::MaxRecentFiles];
 
@@ -240,6 +250,8 @@ private:
     QPointer<PreferencesDialog> mPreferencesDialog;
 
     QMap<QMainWindow*, QByteArray> mMainWindowStates;
+
+    SessionOption<QStringList> mLoadedWorlds { "loadedWorlds" };
 
     static MainWindow *mInstance;
 };

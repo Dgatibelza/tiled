@@ -42,6 +42,8 @@
 #include <QJsonDocument>
 #include <QtPlugin>
 
+#include "qtcompat_p.h"
+
 #include <memory>
 
 #ifdef Q_OS_WIN
@@ -66,12 +68,12 @@ class CommandLineHandler : public CommandLineParser
 public:
     CommandLineHandler();
 
-    bool quit;
-    bool showedVersion;
-    bool disableOpenGL;
-    bool exportMap;
-    bool exportTileset;
-    bool newInstance;
+    bool quit = false;
+    bool showedVersion = false;
+    bool disableOpenGL = false;
+    bool exportMap = false;
+    bool exportTileset = false;
+    bool newInstance = false;
     Preferences::ExportOptions exportOptions;
 
 private:
@@ -127,7 +129,7 @@ static void messagesToConsole(QtMsgType type, const QMessageLogContext &context,
 static void initializePluginsAndExtensions()
 {
     PluginManager::instance()->loadPlugins();
-    ScriptManager::instance().initialize();
+    ScriptManager::instance().ensureInitialized();
 }
 
 /**
@@ -185,12 +187,6 @@ inline T *findExportFormat(const QString *filter,
 
 
 CommandLineHandler::CommandLineHandler()
-    : quit(false)
-    , showedVersion(false)
-    , disableOpenGL(false)
-    , exportMap(false)
-    , exportTileset(false)
-    , newInstance(false)
 {
     option<&CommandLineHandler::showVersion>(
                 QLatin1Char('v'),
@@ -252,8 +248,8 @@ void CommandLineHandler::showVersion()
 {
     if (!showedVersion) {
         showedVersion = true;
-        qWarning().noquote() << QApplication::applicationDisplayName()
-                             << QApplication::applicationVersion();
+        qInfo().noquote() << QApplication::applicationDisplayName()
+                          << QApplication::applicationVersion();
         quit = true;
     }
 }
@@ -310,9 +306,9 @@ void CommandLineHandler::showExportFormats()
     }
     formats.sort(Qt::CaseSensitive);
 
-    qWarning().noquote() << tr("Map export formats:");
+    qInfo().noquote() << tr("Map export formats:");
     for (const QString &name : formats)
-        qWarning(" %s", qUtf8Printable(name));
+        qInfo(" %s", qUtf8Printable(name));
 
     formats.clear();
     const auto tilesetFormats = PluginManager::objects<TilesetFormat>();
@@ -322,9 +318,9 @@ void CommandLineHandler::showExportFormats()
     }
     formats.sort(Qt::CaseSensitive);
 
-    qWarning().noquote() << tr("Tileset export formats:");
+    qInfo().noquote() << tr("Tileset export formats:");
     for (const QString &name : formats)
-        qWarning(" %s", qUtf8Printable(name));
+        qInfo(" %s", qUtf8Printable(name));
 
     quit = true;
 }
@@ -348,12 +344,26 @@ int main(int argc, char *argv[])
 
     qInstallMessageHandler(messagesToConsole);
 
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
+
+    // High-DPI scaling is always enabled in Qt 6
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+#endif
+#endif
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    // Enable support for highres images (added in Qt 5.1, but off by default, always enabled in Qt 6)
+    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+
+    // Fallback session management was removed from Qt 6
     QGuiApplication::setFallbackSessionManagementEnabled(false);
 
-    // Enable support for highres images (added in Qt 5.1, but off by default)
-    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+    // Window context help buttons are disabled by default in Qt 6
 #if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
     QCoreApplication::setAttribute(Qt::AA_DisableWindowContextHelpButton);
+#endif
 #endif
 
 #ifdef Q_OS_MAC
@@ -470,18 +480,33 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    if (!commandLine.filesToOpen().isEmpty() && !commandLine.newInstance) {
-        // Convert files to absolute paths because the already running Tiled
+    QStringList filesToOpen;
+
+    for (const QString &fileName : commandLine.filesToOpen()) {
+        const QFileInfo fileInfo(fileName);
+        const QString filePath = QDir::cleanPath(fileInfo.absoluteFilePath());
+
+        if (fileInfo.suffix() == QLatin1String("tiled-project")) {
+            if (!fileInfo.exists()) {
+                qWarning().noquote() << QCoreApplication::translate("Command line", "Project file '%1' not found.").arg(fileName);
+                return 1;
+            }
+            Preferences::setStartupProject(filePath);
+        } else {
+            filesToOpen.append(filePath);
+        }
+    }
+
+    if (a.isRunning() && !filesToOpen.isEmpty() && !commandLine.newInstance) {
+        // Files need to be absolute paths because the already running Tiled
         // instance likely does not have the same working directory.
-        QStringList absolutePaths;
-        for (const QString &fileName : commandLine.filesToOpen())
-            absolutePaths.append(QFileInfo(fileName).absoluteFilePath());
-        QJsonDocument doc(QJsonArray::fromStringList(absolutePaths));
+        QJsonDocument doc(QJsonArray::fromStringList(filesToOpen));
         if (a.sendMessage(QLatin1String(doc.toJson())))
             return 0;
     }
 
     StyleHelper::initialize();
+    Session::initialize();
 
     MainWindow w;
     w.show();
@@ -494,13 +519,12 @@ int main(int argc, char *argv[])
     QObject::connect(&a, &TiledApplication::fileOpenRequest,
                      &w, [&] (const QString &file) { w.openFile(file); });
 
-    initializePluginsAndExtensions();
+    PluginManager::instance()->loadPlugins();
 
     w.initializeSession();
 
-    if (!commandLine.filesToOpen().isEmpty())
-        for (const QString &fileName : commandLine.filesToOpen())
-            w.openFile(fileName);
+    for (const QString &fileName : qAsConst(filesToOpen))
+        w.openFile(fileName);
 
     return a.exec();
 }
